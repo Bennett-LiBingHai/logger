@@ -1,16 +1,16 @@
 #pragma once
-#include"logger/literals.h"
-#include"logger/format_result.h"
+#include "logger/format_result.h"
+#include "logger/literals.h"
 
-//日志输出槽
-class LogSink{
-public:
-    //打印日志,输入格式化后的信息
-    virtual void log(const FormatResult& result)=0;
-    //刷新日志缓冲区
-    virtual void flush()=0;
-    
-    virtual ~LogSink()=default;
+// 日志输出槽
+class LogSink {
+ public:
+  // 打印日志,输入格式化后的信息
+  virtual void log(const FormatResult& result) = 0;
+  // 刷新日志缓冲区
+  virtual void flush() = 0;
+
+  virtual ~LogSink() = default;
 };
 
 // //单文件日志输出槽
@@ -41,7 +41,8 @@ public:
 // //每隔date_interval_h(默认24)小时新增日志文件,期间如果文件大小超过max_file_size(默认10_mb)也新增日志文件(不会重置date_interval_h)
 // class MultiFileSink:LogSink{
 // public:
-//     MultiFileSink(const std::string& dir,unsigned int date_interval_h=24,unsigned long long max_file_size=10 * 1024 * 1024);
+//     MultiFileSink(const std::string& dir,unsigned int date_interval_h=24,unsigned long long
+//     max_file_size=10 * 1024 * 1024);
 
 //     //打印日志,输入格式化后的信息
 //     void log(const std::string& formatted_msg){

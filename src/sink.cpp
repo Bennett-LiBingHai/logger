@@ -1,6 +1,7 @@
 // #include"log_sink.h"
 
-// MultiFileSink::MultiFileSink(const std::string& dir,unsigned int date_interval_h,unsigned long long max_file_size)
+// MultiFileSink::MultiFileSink(const std::string& dir,unsigned int date_interval_h,unsigned long
+// long max_file_size)
 // :dir_{dir},date_interval_h_{date_interval_h},max_file_size_{max_file_size},n_(0)
 // {
 //     if(!std::filesystem::is_directory(dir_)){
@@ -23,8 +24,8 @@
 //         time_t t=std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
 //         tm daytime=*localtime(&t);
 //         if(strftime(buf,sizeof(buf),"%Y_%m_%d_%H.log.",&daytime)==0){
-//             std::cerr<<"MultiFileSink::MultiFileSink: strftime error: filename too long"<<std::endl;
-//             exit(0);
+//             std::cerr<<"MultiFileSink::MultiFileSink: strftime error: filename too
+//             long"<<std::endl; exit(0);
 //         }
 //         file_=dir_/(buf+std::to_string(n_));
 //     }
@@ -38,9 +39,8 @@
 //             if(*p=='.')cur=p;
 //             ++p;
 //         }
-//         if(*cur!='.')std::cerr<<"MultiFileSink::change_log_file: file_ not contains '.'"<<std::endl;
-//         std::string n{std::to_string(n_)};
-//         for(auto& c:n){
+//         if(*cur!='.')std::cerr<<"MultiFileSink::change_log_file: file_ not contains
+//         '.'"<<std::endl; std::string n{std::to_string(n_)}; for(auto& c:n){
 //             *(++cur)=c;
 //         }
 //         *cur='\0';
@@ -52,12 +52,13 @@
 //         std::cerr<<"MultiFileSink::MultiFileSink: open error"<<std::endl;
 //         exit(0);
 //     }
-//     pre_time=std::chrono::system_clock::now(); 
+//     pre_time=std::chrono::system_clock::now();
 // }
 
 // //检查是否需要新建日志文件,如果需要,自动创建
 // void MultiFileSink::check(){
-//     auto interval=std::chrono::duration_cast<std::chrono::hours>(std::chrono::system_clock::now()-pre_time);
+//     auto
+//     interval=std::chrono::duration_cast<std::chrono::hours>(std::chrono::system_clock::now()-pre_time);
 //     if(interval.count()>=date_interval_h_){
 //         change_log_file();
 //         return;
