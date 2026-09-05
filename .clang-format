@@ -1,0 +1,76 @@
+# ==============================================================
+# Logger 项目代码风格（clang-format）
+# 目标版本：clang-format 18（Ubuntu 24.04 默认；不同大版本格式化结果可能不同，
+#           升级大版本后需全量重跑一次格式化并统一提交）
+# 以 Google 风格为底，关键项逐项显式声明并注释，
+# 减少对 BasedOnStyle 默认值的依赖，便于维护与团队对齐。
+# 参考：https://clang.llvm.org/docs/ClangFormatStyleOptions.html
+# ==============================================================
+
+# 兜底基础风格（仅作未显式声明项的安全网，关键项下方均已覆盖）
+BasedOnStyle: Google
+Language: Cpp
+Standard: c++17
+
+# ---------- 缩进与宽度 ----------
+IndentWidth: 2                 # 缩进宽度（2 空格）
+TabWidth: 2                    # 一个 Tab 等价宽度（与 IndentWidth 一致）
+UseTab: Never                  # 永不使用 Tab，只用空格
+ContinuationIndentWidth: 4     # 换行续行的额外缩进
+ColumnLimit: 100               # 单行最大宽度（超过则换行）
+AccessModifierOffset: -1       # public/private/protected 相对 class 的缩进（-1 = 与 class 齐平）
+NamespaceIndentation: None     # namespace 内不缩进
+IndentCaseLabels: false        # switch 的 case 标签不额外缩进（与 switch 对齐）
+IndentPPDirectives: None       # 预处理指令 #if/#endif 不缩进
+MaxEmptyLinesToKeep: 1         # 连续空行最多保留 1 行
+
+# ---------- 大括号 ----------
+BreakBeforeBraces: Attach      # 大括号与语句同行（if (...) {），各场景统一 Attach
+
+# ---------- 指针 / 引用对齐 ----------
+DerivePointerAlignment: false  # 不按上下文自动推导，固定用下方设置
+PointerAlignment: Left         # int* p（* 靠类型）
+ReferenceAlignment: Pointer    # 引用跟随指针对齐方式（int& r）
+
+# ---------- 空格 ----------
+SpaceBeforeParens: ControlStatements  # 控制语句的 ( 前加空格；函数调用/定义不加
+SpaceAfterCStyleCast: false           # C 风格强转后不加空格（(int)x）
+SpacesInAngles: false                 # 模板尖括号内不加空格（vector<int>）
+SpaceBeforeRangeBasedForLoopColon: true  # range-for 冒号前加空格（for (auto& x : v)）
+SpaceInEmptyParentheses: false        # 空括号内不加空格
+SpacesInSquareBrackets: false         # 下标/数组括号内不加空格
+SpaceAfterLogicalNot: false           # ! 后不加空格（!ok）
+SpaceBeforeCpp11BracedList: false     # 列表初始化 { 前不加空格（Foo{1, 2}）
+
+# ---------- include 排序 ----------
+SortIncludes: true            # 对 #include 排序
+IncludeBlocks: Regroup        # 按类别分组，合并空行隔开的块再排序
+IncludeCategories:
+  - Regex: '^<.*>'            # 系统/标准库头（尖括号）
+    Priority: 1
+  - Regex: '^"logger/'        # 本项目公共头（logger/ 前缀）
+    Priority: 2
+  - Regex: '^".*"'            # 其他本地头（如 test_helpers.h）
+    Priority: 3
+
+# ---------- 单行允许 ----------
+AllowShortFunctionsOnASingleLine: Empty     # 仅空函数允许单行
+AllowShortIfStatementsOnASingleLine: Never  # if 不允许单行
+AllowShortLoopsOnASingleLine: false         # 循环不允许单行
+AllowShortCaseLabelsOnASingleLine: false    # case 标签不允许与语句同行
+AllowShortLambdasOnASingleLine: All         # 短 lambda 允许单行
+AllowShortBlocksOnASingleLine: Never        # 块不允许单行
+
+# ---------- 参数 / 括号换行 ----------
+BinPackArguments: true    # 实参能放下就放一行，放不下才逐行
+BinPackParameters: true   # 形参同上
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
+AlignAfterOpenBracket: Align   # 续行与开括号对齐
+
+# ---------- 注释与杂项 ----------
+AlignTrailingComments: true       # 对齐行尾注释
+SpacesBeforeTrailingComments: 2   # 行尾注释前保留 2 个空格
+ReflowComments: true              # 允许重排注释
+Cpp11BracedListStyle: true        # C++11 列表初始化风格
+FixNamespaceComments: true        # 自动补全 namespace 结尾注释
