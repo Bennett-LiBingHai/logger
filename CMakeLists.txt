@@ -50,7 +50,7 @@ if(BUILD_TESTS)
     )
 
     add_executable(test_logger ${TEST_SOURCES})
-    target_link_libraries(test_logger PRIVATE logger GTest::gtest GTest::gmock GTest::gtest_main)
+    target_link_libraries(test_logger PRIVATE logger GTest::gtest GTest::gtest_main)
     target_compile_features(test_logger PRIVATE cxx_std_17)
     target_include_directories(test_logger PRIVATE ${CMAKE_SOURCE_DIR}/test)
     add_test(NAME test_logger COMMAND test_logger)
