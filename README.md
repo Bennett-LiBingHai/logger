@@ -26,6 +26,19 @@ cmake -S . -B build
 cmake --build build
 ```
 
+## 开发工具
+
+代码格式化统一用 **clang-format 18**（配置见 [.clang-format](.clang-format)）：
+
+```bash
+sudo apt install clang-format-18     # 按大版本安装（Ubuntu 24.04 装 18.1.x）
+clang-format-18 --version            # 确认输出 18.x
+clang-format-18 -i <file>            # 格式化单个文件
+```
+
+> 精确锁到补丁版本：`sudo apt install clang-format-18=1:18.1.3-1ubuntu1`。
+> 不同大版本的 clang-format 结果可能略有差异，升级后需全量重跑一次并统一提交。
+
 ## 快速开始
 
 ```cpp
@@ -131,6 +144,39 @@ logger/
 ├── examples/                  # 可运行示例
 ├── test/                      # 单元 + 集成测试
 └── docs/                      # 设计文档（milestone.md）
+```
+
+## 提交规范
+
+Commit message 遵循 [Conventional Commits](https://www.conventionalcommits.org/)：
+
+```
+<type>(<scope>): <subject>
+```
+
+`type` 取值：
+
+| type | 含义 | 示例 |
+|---|---|---|
+| `feat` | 新功能 | `feat(logger): 添加按级别路由` |
+| `fix` | 修复 bug | `fix(formatter): 修复时间格式` |
+| `docs` | 仅文档变更 | `docs: 补充 README` |
+| `style` | 代码风格（空格/格式/分号，不影响逻辑） | `style: 统一缩进` |
+| `refactor` | 重构（不改行为、不加功能、不修 bug） | `refactor: 拆分 log()` |
+| `perf` | 性能优化 | `perf: 减少字符串拷贝` |
+| `test` | 添加/修改测试 | `test: 添加并发测试` |
+| `build` | 构建系统或外部依赖 | `build: 升级 CMake` |
+| `ci` | CI 配置 | `ci: 添加 GitHub Actions` |
+| `chore` | 杂务（不涉及 src/test 的维护） | `chore: 更新 .gitignore` |
+| `revert` | 回滚某次提交 | `revert: 回滚 feat(logger)` |
+
+- `scope`：可选，影响范围（如 `logger`、`formatter`、`sink`、`test`）
+- `subject`：简短描述，祈使语气，≤ 50 字
+
+本地用 pre-commit 的 `commit-msg` 钩子校验：
+
+```bash
+pre-commit install --hook-type commit-msg
 ```
 
 ## 里程碑
