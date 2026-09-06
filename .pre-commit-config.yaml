@@ -14,7 +14,7 @@ repos:
     rev: v18.1.8                      # 锁 clang-format 18.1.8（18.1.3 的 wheel 哈希已失效，用最新 18.x）
     hooks:
       - id: clang-format
-        args: [--dry-run, --Werror]   # 只检查不改；想自动修复改成 ["-i"]
+        args: ["-i"]                  # [--dry-run, --Werror]只检查不改；想自动修复改成 ["-i"]
         types_or: [c, c++]            # 只处理 C/C++ 源文件
 
   # ---- 通用文件卫生检查（除了check-yaml和check-added-large-files,其它会自动改,需要重新git add） ----

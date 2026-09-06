@@ -324,7 +324,23 @@ v0.1.0
 
 ## 主要功能
 
-### 1. Key-Value 字段
+### 1. 自研 {} 格式化器
+
+在进入 KV 之前，先把现有 `snprintf`（`%d`）风格的格式化替换为自研 `{}` 占位符格式化器，作为 KV 与 JSON 输出的公共地基：
+
+- `encode(value, out, bool json)`：底层编码入口，文本与 JSON 共用，仅在字符串处按 `json` 分支（加引号/转义）
+- `format(fmt, args...)`：位置参数内插，复用 `encode`
+- 不引入 {fmt} / `std::format`，自研实现
+- TextFormatter 与 JsonFormatter 必须复用同一 `encode` 路径（文本 `key=value`，JSON 输出带类型成员）
+- 替换现有 `log()` 的 `snprintf` 路径后，同步更新 README、examples 与 M1 测试用例再回归
+
+> 破坏性变更说明：本里程碑把格式化语义从 printf（`%d`/`%s`）切换为 `{}`，v0.1.0 的日志格式字符串不再源级兼容。`LOG_INFO("user %d login", id)` 在新语义下会变成「正文原样 + 参数无处安放」，必须同步改写为 `LOG_INFO("user {} login", id)`。
+
+```cpp
+LOG_INFO("user {} login", userID);
+```
+
+### 2. Key-Value 字段
 
 支持：
 
@@ -336,7 +352,24 @@ Logger::get_instance().info("order created",
 );
 ```
 
-### 2. 预绑定字段
+### 3. JSON Formatter
+
+输出示例：
+
+```json
+{
+  "time": "2026-09-02T10:20:30.123",
+  "level": "info",
+  "msg": "order created",
+  "order_id": "ORD-1001",
+  "user_id": 2001,
+  "amount": 99.5
+}
+```
+
+> 时间序列化统一走 `format_time`，输出带毫秒的规范时间串（如 `2026-09-02T10:20:30.123`），文本与 JSON 共用；不要在 TextFormatter / JsonFormatter 里各自拼接时间。
+
+### 4. 预绑定字段
 
 支持：
 
@@ -355,36 +388,21 @@ serviceLogger.info("server started");
 service=order-service version=1.2.0
 ```
 
-### 3. JSON Formatter
-
-输出示例：
-
-```json
-{
-  "time": "2026-09-02T10:20:30.123Z",
-  "level": "info",
-  "msg": "order created",
-  "order_id": "ORD-1001",
-  "user_id": 2001,
-  "amount": 99.5
-}
-```
-
-### 4. 自定义字段类型
+### 5. 自定义字段类型
 
 支持：
 
 - 字符串（`const char*`、`std::string`、`std::string_view`）
 - 整数（各宽度有符号/无符号）
-- 浮点数
+- 浮点数（`float` / `double`，正确处理 `nan` / `inf`）
 - 布尔值
 - 时间（`std::chrono` 各时钟的时间点）
 - 数组与容器
-- 对象与嵌套结构
-- 异常（`std::exception` / `std::error_code`）
-- 自定义序列化类型（`operator<<` 或 `to_json()`）
+- 自定义序列化类型（`operator<<`）
 
-### 5. 字段命名规范
+> 对象嵌套结构、异常（`std::exception` / `std::error_code`）不在本里程碑，归入 **M5：错误记录**（见第八节），避免 M2 范围膨胀、与 M5 重叠。
+
+### 6. 字段命名规范
 
 建议统一：
 
@@ -404,7 +422,7 @@ error
 stacktrace
 ```
 
-### 6. 非法字段处理
+### 7. 非法字段处理
 
 C++ 有强类型系统，大部分字段错误可以在编译期拦截：
 
@@ -415,13 +433,14 @@ logger.info("test", KV("key", my_type));  // 无序列化支持 → 编译错误
 
 需要明确处理以下情况：
 
-- 空 key、重复 key（编译期或运行时检测）
+- 空 key：字面量 key 编译期 `static_assert` 拦截；运行时动态 key 在 log 阶段直接跳过
+- 重复 key：后写覆盖（last-write-wins），保序去重
 - 重载决议歧义（如 `const char*` 指针 vs 字符串）
 - 运行时兜底（如 `std::bad_alloc` 等异常）
 
 建议通过模板 + `static_assert` / `if constexpr` 在编译期拒绝非法字段，运行时兜底用 noexcept 包裹，绝不让日志 API 因字段错误直接导致业务崩溃。
 
-### 7. 特殊字符转义
+### 8. 特殊字符转义
 
 处理：
 
@@ -429,17 +448,17 @@ logger.info("test", KV("key", my_type));  // 无序列化支持 → 编译错误
 - 制表符
 - 引号
 - 控制字符
-- 非法 UTF-8
 - 用户输入中的日志注入内容
 
 ## 验收标准
 
-- 文本和 JSON 输出内容一致
-- 字段类型不会被无意义地全部转成字符串
-- 字段顺序有明确规则
+- 同一 Record 在文本与 JSON 下字段值语义一致（值不变，仅序列化形式不同），不要求字节级一致
+- 字段类型不会被无意义地全部转成字符串（int 输出 `1001` 而非 `"1001"`）
+- 字段顺序有明确规则：按调用顺序排列，用 `std::vector<Field>` 等有序容器实现，不得用无序 map
+- TextFormatter 与 JsonFormatter 复用同一 `encode(value, out, bool json)` 编码路径
 - 非法字段在编译期被拦截，运行时兜底不崩溃
 - 特殊字符不会伪造日志行
-- 结构化字段功能有完整测试
+- 结构化字段功能有完整测试（各类型 encode、`{}` 插值、JSON 转义、字段顺序、类型保留）
 
 ## 建议版本
 

@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "logger/format_result.h"
+#include "logger/formatter.h"
 #include "logger/sink.h"
 
 // 捕获日志输出的测试用 Sink（线程安全），用于断言 Logger 实际写出的内容。

@@ -30,7 +30,7 @@ TEST_F(LoggerTest, LogsPlainStringToSink) {
 }
 
 TEST_F(LoggerTest, FormatsVariadicArguments) {
-  Logger::get_instance().log(LogLevel::INFO, "f.cpp", 1, "func", "user %d login, name=%s", 1001,
+  Logger::get_instance().log(LogLevel::INFO, "f.cpp", 1, "func", "user {} login, name={}", 1001,
                              "tom");
   ASSERT_EQ(sink_->size(), 1u);
   EXPECT_NE(sink_->messages().front().find("user 1001 login, name=tom"), std::string::npos);
@@ -112,16 +112,76 @@ TEST_F(LoggerTest, SetAndGetConfigRoundTrip) {
 }
 
 TEST_F(LoggerTest, MacroInterfaceWritesCompleteLines) {
-  LOG_TRACE("trace %d", 1);
+  LOG_TRACE("trace {}", 1);
   LOG_DEBUG("debug");
-  LOG_INFO("info %s", "x");
+  LOG_INFO("info {}", "x");
   LOG_WARN("warn");
-  LOG_ERROR("error %d", 5);
+  LOG_ERROR("error {}", 5);
   LOG_FATAL("fatal");
   ASSERT_EQ(sink_->size(), 6u);
   for (const auto& line : sink_->messages()) {
     EXPECT_TRUE(matches_log_line(line));
   }
+}
+
+TEST_F(LoggerTest, WithPrebindsFields) {
+  auto serviceLogger = Logger::get_instance().with(KV("service", "order-service"));
+  serviceLogger.info("server started");
+  ASSERT_EQ(sink_->size(), 1u);
+  EXPECT_NE(sink_->messages().front().find("service=order-service"), std::string::npos);
+}
+
+TEST_F(LoggerTest, StructuredFieldsReachTextSink) {
+  Logger::get_instance().info("order created", KV("order_id", "ORD-1001"), KV("amount", 99.5));
+  ASSERT_EQ(sink_->size(), 1u);
+  const std::string line = sink_->messages().front();
+  EXPECT_NE(line.find("order_id=ORD-1001"), std::string::npos);
+  EXPECT_NE(line.find("amount=99.5"), std::string::npos);
+}
+
+TEST_F(LoggerTest, DedupFieldsLastWriteWins) {
+  LogConfig cfg;
+  cfg.format = LogFormat::JSON;
+  Logger::get_instance().set_config(cfg);
+  // 预绑定 service=order、env=prod；本次调用 env=dev、service=order-2 覆盖
+  auto l = Logger::get_instance().with(KV("service", "order"), KV("env", "prod"));
+  l.info("start", KV("env", "dev"), KV("service", "order-2"));
+  ASSERT_EQ(sink_->size(), 1u);
+  const std::string line = sink_->messages().front();
+  EXPECT_NE(line.find("\"service\": \"order-2\""), std::string::npos);
+  EXPECT_NE(line.find("\"env\": \"dev\""), std::string::npos);
+  EXPECT_EQ(line.find("\"service\": \"order\""), std::string::npos);  // 旧值被覆盖
+  EXPECT_EQ(line.find("\"env\": \"prod\""), std::string::npos);
+}
+
+TEST_F(LoggerTest, EmptyRuntimeKeySkipped) {
+  std::string empty_key;
+  Logger::get_instance().info("msg", KV(empty_key, "value"), KV("ok", 1));
+  ASSERT_EQ(sink_->size(), 1u);
+  const std::string line = sink_->messages().front();
+  EXPECT_EQ(line.find("=value"), std::string::npos);  // 空 key 被跳过
+  EXPECT_NE(line.find("ok=1"), std::string::npos);
+}
+
+TEST_F(LoggerTest, WithSkipsEmptyKey) {
+  std::string empty;
+  auto l = Logger::get_instance().with(KV(empty, "v"), KV("svc", "x"));
+  l.info("start");
+  ASSERT_EQ(sink_->size(), 1u);
+  const std::string line = sink_->messages().front();
+  EXPECT_EQ(line.find("=v"), std::string::npos);  // 空 key 被跳过
+  EXPECT_NE(line.find("svc=x"), std::string::npos);
+}
+
+TEST_F(LoggerTest, JsonFormatSelection) {
+  LogConfig cfg;
+  cfg.format = LogFormat::JSON;
+  Logger::get_instance().set_config(cfg);
+  Logger::get_instance().log(LogLevel::INFO, "f.cpp", 1, "func", "hi");
+  ASSERT_EQ(sink_->size(), 1u);
+  const std::string line = sink_->messages().front();
+  EXPECT_NE(line.find("\"msg\": \"hi\""), std::string::npos);
+  EXPECT_NE(line.find("\"level\": \"info\""), std::string::npos);
 }
 
 TEST(FilenameOfTest, StripsDirectoryPrefix) {

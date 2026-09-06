@@ -29,7 +29,7 @@ TEST_F(LoggerConcurrencyTest, ConcurrentLoggingIsRaceFreeAndLossless) {
   for (int t = 0; t < kThreads; ++t) {
     threads.emplace_back([t]() {
       for (int m = 0; m < kPerThread; ++m) {
-        LOG_INFO("thread_%d_msg_%d", t, m);
+        LOG_INFO("thread_{}_msg_{}", t, m);
       }
     });
   }

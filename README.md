@@ -1,17 +1,19 @@
 # Logger
 
-一个 C++17 的日志库。当前进度：**M1 最小可用版本（MVP）**。
+一个 C++17 的日志库。当前进度：**M2 结构化日志与格式化系统**。
 
-## 特性（M1）
+## 特性
 
-- 六种日志级别：`TRACE / DEBUG / INFO / WARN / ERROR / FATAL`，外加 `OFF` 关闭全部
-- 宏接口 `LOG_TRACE` … `LOG_FATAL`，支持 printf 风格变参格式化
+- 七种日志级别：`TRACE / DEBUG / INFO / WARN / ERROR / FATAL`，外加 `OFF` 关闭全部
+- 宏接口 `LOG_TRACE` … `LOG_FATAL`，支持 `{}` 位置参数格式化
+- 结构化字段 `KV("key", value)`，文本输出 `key=value`，JSON 输出带类型成员
+- 文本 / JSON 两种输出格式，`config.format` 切换
+- 预绑定字段 `with(KV(...))`，共享 sinks/config，返回子 Logger
+- 字段去重（同 key 后写覆盖）、空 key 跳过
 - 控制台输出按级别分流：`Error` 及以上 → stderr，其余 → stdout
 - 全局日志级别过滤
 - 多线程安全（互斥锁保护，TSan 可验证）
-- 基础配置：级别、单条日志最大长度、时间格式、UTC/本地时间
 - 超长日志自动截断
-- 输出目标抽象（Sink），可扩展自定义 Sink
 
 ## 依赖
 
@@ -50,9 +52,19 @@ int main() {
     // Error 及以上 → stderr，其余 → stdout
     Logger::get_instance().add_sink(std::make_shared<ConsoleSink>());
 
-    LOG_INFO("user %d login", 1001);
-    LOG_WARN("disk usage %d%%", 92);
-    LOG_ERROR("connect failed: %s", "timeout");
+    // {} 位置参数格式化
+    LOG_INFO("user {} login", 1001);
+    LOG_ERROR("connect failed: {}", "timeout");
+
+    // 结构化字段（文本格式输出 key=value）
+    Logger::get_instance().info("order created", KV("order_id", "ORD-1001"),
+                                KV("amount", 99.5));
+
+    // 切换 JSON 输出
+    LogConfig cfg;
+    cfg.format = LogFormat::JSON;
+    Logger::get_instance().set_config(cfg);
+    Logger::get_instance().info("payment ok", KV("trace_id", "abc123"));
 
     Logger::get_instance().flush_all();
     return 0;
@@ -78,7 +90,28 @@ cmake --build build --target logger_example
 | `FATAL` | 致命错误 |
 | `OFF` | 关闭所有日志输出 |
 
-低于 `config.log_level` 的日志会被忽略（在宏入口处尽早过滤）。
+低于 `config.log_level` 的日志会被忽略（在入口处尽早过滤）。
+
+## 结构化字段
+
+```cpp
+// 文本：order created order_id=ORD-1001 amount=99.5
+Logger::get_instance().info("order created", KV("order_id", "ORD-1001"),
+                            KV("amount", 99.5));
+
+// 预绑定字段（共享 sinks/config，返回子 Logger）
+auto serviceLogger = Logger::get_instance().with(
+    KV("service", "order-service"),
+    KV("version", "1.2.0"),
+);
+serviceLogger.info("server started");  // 自动带 service / version
+```
+
+字段规则：
+
+- 按调用顺序输出；同 key 后写覆盖（last-write-wins）
+- 空 key：字面量 key 编译期 `static_assert` 拦截；运行时动态 key 直接跳过
+- 支持类型：字符串、各宽度整数、浮点（含 nan/inf）、布尔、`char`、`std::vector`、时间点、带 `operator<<` 的自定义类型
 
 ## 配置
 
@@ -88,18 +121,27 @@ cmake --build build --target logger_example
 | `max_log_item_size` | `1024` | 单条日志最大长度（超长截断） |
 | `time_format` | `TimeFormat::ISO8601` | 时间格式 |
 | `use_utc_time` | `false` | 是否使用 UTC（否则本地时间） |
+| `format` | `LogFormat::TEXT` | 输出格式：`TEXT` / `JSON` |
 
 ```cpp
 LogConfig cfg;
 cfg.log_level = LogLevel::INFO;
-cfg.use_utc_time = true;
+cfg.format = LogFormat::JSON;
 Logger::get_instance().set_config(cfg);
 ```
 
 ## 输出格式
 
+文本（默认）：
+
 ```
-2026-09-04T11:50:32.077[INFO][<thread_id>][<file>:<line>]<content>
+2026-09-04T11:50:32.077[INFO][<thread_id>][<file>:<line>]<content> key=value ...
+```
+
+JSON（`cfg.format = LogFormat::JSON`）：
+
+```json
+{"time": "2026-09-04T11:50:32.077", "level": "info", "msg": "order created", "order_id": "ORD-1001", "amount": 99.5}
 ```
 
 ## 测试
@@ -110,7 +152,7 @@ cmake --build build
 ctest --test-dir build
 ```
 
-- `test_logger`：单元 + 集成用例（级别、过滤、格式化、多 Sink、截断、并发等）
+- `test_logger`：单元 + 集成用例（级别、过滤、`{}` 格式化、结构化字段、JSON、去重、并发等）
 - `test_console`：手动观察 stderr 分流的用例
 
 ### Sanitizer
@@ -131,19 +173,22 @@ ctest --test-dir build-tsan
 ```text
 logger/
 ├── CMakeLists.txt
-├── include/logger/            # 公共头文件
-│   ├── logger.h               # Logger 核心 + LOG_* 宏
-│   ├── level.h                # 级别枚举
-│   ├── config.h               # 配置
-│   ├── record.h               # 日志记录
-│   ├── format_result.h        # 格式化结果
-│   ├── sink.h                 # Sink 抽象
-│   ├── sink/console_sink.h    # 控制台 Sink
-│   └── formatter/text_formatter.h
-├── src/                       # 实现
-├── examples/                  # 可运行示例
-├── test/                      # 单元 + 集成测试
-└── docs/                      # 设计文档（milestone.md）
+├── include/logger/                 # 公共头文件
+│   ├── logger.h                    # Logger 核心 + LOG_* 宏 + with()
+│   ├── level.h                     # 级别枚举
+│   ├── config.h                    # 配置（含 format 输出格式）
+│   ├── record.h                    # 日志记录（含结构化字段）
+│   ├── field.h                     # KV 字段 + encode 编码入口
+│   ├── format.h                    # {} 位置参数格式化
+│   ├── formatter.h                 # 格式化结果 FormatResult
+│   ├── formatter/text_formatter.h
+│   ├── formatter/json_formatter.h
+│   ├── sink.h                      # Sink 抽象
+│   └── sink/console_sink.h         # 控制台 Sink
+├── src/                            # 实现
+├── examples/                       # 可运行示例
+├── test/                           # 单元 + 集成测试
+└── docs/                           # 设计文档（milestone.md）
 ```
 
 ## 提交规范
@@ -181,4 +226,4 @@ pre-commit install --hook-type commit-msg
 
 ## 里程碑
 
-完整路线见 [docs/milestone.md](docs/milestone.md)。当前完成 **M1：最小可用版本 MVP**。
+完整路线见 [docs/milestone.md](docs/milestone.md)。当前完成 **M2：结构化日志与格式化系统**。

@@ -1,4 +1,6 @@
 #pragma once
+#include <cctype>
+#include <string>
 #include <string_view>
 
 // 日志级别
@@ -31,5 +33,27 @@ enum class LogLevel {
     return "OFF";
   default:
     return "UNKNOWN";
+  }
+}
+
+// 获取日志级别对应小写字符串（JSON 惯例）
+[[nodiscard]] inline std::string to_lower_string(LogLevel log_level) {
+  switch (log_level) {
+  case LogLevel::TRACE:
+    return "trace";
+  case LogLevel::DEBUG:
+    return "debug";
+  case LogLevel::INFO:
+    return "info";
+  case LogLevel::WARN:
+    return "warn";
+  case LogLevel::ERROR:
+    return "error";
+  case LogLevel::FATAL:
+    return "fatal";
+  case LogLevel::OFF:
+    return "off";
+  default:
+    return "unknown";
   }
 }

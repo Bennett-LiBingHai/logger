@@ -1,5 +1,5 @@
 #pragma once
-#include "logger/format_result.h"
+#include "logger/formatter.h"
 #include "logger/literals.h"
 
 // 日志输出槽
