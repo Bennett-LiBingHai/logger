@@ -184,6 +184,46 @@ TEST_F(LoggerTest, JsonFormatSelection) {
   EXPECT_NE(line.find("\"level\": \"info\""), std::string::npos);
 }
 
+TEST_F(LoggerTest, DropStrategyCountsFailure) {
+  auto failing = std::make_shared<FailOnceSink>();
+  Logger::get_instance().add_sink(failing);
+
+  LogConfig cfg;
+  cfg.log_fail_strategy = LogFailStrategy::Drop;
+  Logger::get_instance().set_config(cfg);
+
+  auto before = Logger::get_instance().stats();
+  Logger::get_instance().info("msg");
+  auto after = Logger::get_instance().stats();
+  EXPECT_EQ(after.failed_writes - before.failed_writes, 1u);
+  EXPECT_EQ(after.dropped - before.dropped, 1u);
+}
+
+TEST_F(LoggerTest, FallbackStrategyCountsButNotDrop) {
+  auto failing = std::make_shared<FailOnceSink>();
+  Logger::get_instance().add_sink(failing);
+
+  LogConfig cfg;
+  cfg.log_fail_strategy = LogFailStrategy::FallbackToStderr;
+  Logger::get_instance().set_config(cfg);
+
+  auto before = Logger::get_instance().stats();
+  Logger::get_instance().info("msg");  // 会额外写一条到 stderr
+  auto after = Logger::get_instance().stats();
+  EXPECT_EQ(after.failed_writes - before.failed_writes, 1u);
+  EXPECT_EQ(after.dropped - before.dropped, 0u);
+}
+
+TEST_F(LoggerTest, ThrowingSinkDoesNotCrash) {
+  auto throwing = std::make_shared<ThrowOnceSink>();
+  Logger::get_instance().add_sink(throwing);
+
+  auto before = Logger::get_instance().stats();
+  Logger::get_instance().info("msg");  // 若没 catch 会 terminate
+  auto after = Logger::get_instance().stats();
+  EXPECT_EQ(after.failed_writes - before.failed_writes, 1u);
+}
+
 TEST(FilenameOfTest, StripsDirectoryPrefix) {
   EXPECT_STREQ(filename_of("/a/b/c/file.cpp"), "file.cpp");
   EXPECT_STREQ(filename_of("file.cpp"), "file.cpp");

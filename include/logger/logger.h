@@ -1,5 +1,6 @@
 #pragma once
 #include <chrono>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -24,50 +25,6 @@ inline FormatResult format_record(const Record& msg, const LogConfig& config, bo
     return JsonFormatter::format(msg, config, less);
   return TextFormatter::format(msg, config, less);
 }
-
-namespace detail {
-// 追加字段：空 key 跳过
-inline void append_field(std::vector<Field>& fields, Field f) {
-  if (!f.key.empty())
-    fields.emplace_back(std::move(f));
-}
-
-// 递归终止
-inline std::tuple<> split_fields(std::vector<Field>& /*fields*/) {
-  return {};
-}
-
-// 拆分可变参数：Field 进 fields（保持顺序），其余进 tuple 作为位置参数（保持顺序）
-template <typename T, typename... Rest>
-auto split_fields(std::vector<Field>& fields, T&& first, Rest&&... rest) {
-  if constexpr (std::is_same_v<std::decay_t<T>, Field>) {
-    append_field(fields, std::forward<T>(first));  // 空 key 跳过
-    return split_fields(fields, std::forward<Rest>(rest)...);
-  } else {
-    auto tail = split_fields(fields, std::forward<Rest>(rest)...);
-    return std::tuple_cat(std::forward_as_tuple(std::forward<T>(first)), std::move(tail));
-  }
-}
-
-// 字段去重：同 key 后写覆盖（保留最后一个值），位置取首次出现，保持顺序
-inline void dedup_fields(std::vector<Field>& fields) {
-  if (fields.size() < 2)
-    return;
-  std::vector<Field> out;
-  out.reserve(fields.size());
-  std::unordered_map<std::string, size_t> index;  // key → 在 out 中的位置
-  for (auto& f : fields) {
-    auto it = index.find(f.key);
-    if (it == index.end()) {
-      index.emplace(f.key, out.size());
-      out.emplace_back(std::move(f));
-    } else {
-      out[it->second].value = std::move(f.value);  // 覆盖值，保留首次位置
-    }
-  }
-  fields = std::move(out);
-}
-}  // namespace detail
 
 // 日志器
 class Logger {
@@ -131,56 +88,41 @@ class Logger {
   // 刷新所有日志缓冲区
   void flush_all();
 
+  // 获取日志自身统计
+  [[nodiscard]] LogStats stats();
+
   // 预绑定字段：共享 sinks/config/mutex，返回带额外字段的子 Logger
   template <typename... Args>
-  Logger with(Args&&... args) {
-    static_assert((std::is_same_v<std::decay_t<Args>, Field> && ...), "with() 仅接受 KV(...) 字段");
-    Logger child;
-    child.impl_ = impl_;
-    child.fields_ = fields_;
-    (detail::append_field(child.fields_, std::forward<Args>(args)), ...);
-    return child;
-  }
+  Logger with(Args&&... args);
 
  private:
+  // logger共享资源
   struct Impl {
     std::mutex mtx;
     std::vector<std::shared_ptr<LogSink>> sinks;
     LogConfig config;
+    LogStats stats;
   };
+
+  // 追加字段：空 key 跳过
+  void append_field(std::vector<Field>& fields, Field f);
+
+  // 递归终止
+  std::tuple<> split_fields(std::vector<Field>& /*fields*/);
+
+  // 拆分可变参数：Field 进 fields（保持顺序），其余进 tuple 作为位置参数（保持顺序）
+  template <typename T, typename... Rest>
+  auto split_fields(std::vector<Field>& fields, T&& first, Rest&&... rest);
+
+  // 字段去重：同 key 后写覆盖（保留最后一个值），位置取首次出现，保持顺序
+  void dedup_fields(std::vector<Field>& fields);
 
   Logger() = default;
 
+  // 内部log统一入口
   template <typename... Args>
   void log_impl(LogLevel logLevel, const char* file, int line, const char* func, const char* fmt,
-                bool less, Args&&... args) noexcept {
-    std::unique_lock<std::mutex> lock(impl_->mtx);
-    if (logLevel < impl_->config.log_level)
-      return;
-
-    // 合并预绑定字段，再拆分本次调用里的 Field 与位置参数
-    std::vector<Field> fields = fields_;
-    auto positional = detail::split_fields(fields, std::forward<Args>(args)...);
-    detail::dedup_fields(fields);  // 同 key 后写覆盖
-    std::string content = std::apply([&](auto&&... pa) { return format(fmt, pa...); }, positional);
-
-    Record msg{std::chrono::system_clock::now(),
-               logLevel,
-               std::move(content),
-               std::this_thread::get_id(),
-               file,
-               line,
-               func,
-               std::move(fields)};
-    FormatResult result = format_record(msg, impl_->config, less);
-    // 超过长度自动截断
-    if (result.formatted_msg.size() > impl_->config.max_log_item_size) {
-      result.formatted_msg.resize(impl_->config.max_log_item_size);
-    }
-    for (auto& sink : impl_->sinks) {
-      sink->log(result);
-    }
-  }
+                bool less, Args&&... args) noexcept;
 
   std::shared_ptr<Impl> impl_ = std::make_shared<Impl>();
   std::vector<Field> fields_;
@@ -219,3 +161,71 @@ constexpr const char* filename_of(const char* path) {
 #define LOG_FATAL(fmt, ...)                                                          \
   Logger::get_instance().log(LogLevel::FATAL, __FILENAME__, __LINE__, __func__, fmt, \
                              ##__VA_ARGS__)  // 致命
+
+// 预绑定字段：共享 sinks/config/mutex，返回带额外字段的子 Logger
+template <typename... Args>
+Logger Logger::with(Args&&... args) {
+  static_assert((std::is_same_v<std::decay_t<Args>, Field> && ...), "with() 仅接受 KV(...) 字段");
+  Logger child;
+  child.impl_ = impl_;
+  child.fields_ = fields_;
+  (append_field(child.fields_, std::forward<Args>(args)), ...);
+  return child;
+}
+
+// 内部log统一入口
+template <typename... Args>
+void Logger::log_impl(LogLevel logLevel, const char* file, int line, const char* func,
+                      const char* fmt, bool less, Args&&... args) noexcept {
+  std::unique_lock<std::mutex> lock(impl_->mtx);
+  if (logLevel < impl_->config.log_level)
+    return;
+
+  // 合并预绑定字段，再拆分本次调用里的 Field 与位置参数
+  std::vector<Field> fields = fields_;
+  auto positional = split_fields(fields, std::forward<Args>(args)...);
+  dedup_fields(fields);  // 同 key 后写覆盖
+  std::string content = std::apply([&](auto&&... pa) { return format(fmt, pa...); }, positional);
+
+  Record msg{std::chrono::system_clock::now(),
+             logLevel,
+             std::move(content),
+             std::this_thread::get_id(),
+             file,
+             line,
+             func,
+             std::move(fields)};
+  FormatResult result = format_record(msg, impl_->config, less);
+  // 超过长度自动截断
+  if (result.formatted_msg.size() > impl_->config.max_log_item_size) {
+    result.formatted_msg.resize(impl_->config.max_log_item_size);
+  }
+  for (auto& sink : impl_->sinks) {
+    bool ok = false;
+    try {
+      ok = sink->log(result);
+    } catch (...) {
+      ok = false;  // sink 抛异常视为失败，不允许日志导致进程崩溃
+    }
+    if (!ok) {
+      ++impl_->stats.failed_writes;
+      if (impl_->config.log_fail_strategy == LogFailStrategy::FallbackToStderr) {
+        std::cerr << result;
+      } else {
+        ++impl_->stats.dropped;
+      }
+    }
+  }
+}
+
+// 拆分可变参数：Field 进 fields（保持顺序），其余进 tuple 作为位置参数（保持顺序）
+template <typename T, typename... Rest>
+auto Logger::split_fields(std::vector<Field>& fields, T&& first, Rest&&... rest) {
+  if constexpr (std::is_same_v<std::decay_t<T>, Field>) {
+    append_field(fields, std::forward<T>(first));  // 空 key 跳过
+    return split_fields(fields, std::forward<Rest>(rest)...);
+  } else {
+    auto tail = split_fields(fields, std::forward<Rest>(rest)...);
+    return std::tuple_cat(std::forward_as_tuple(std::forward<T>(first)), std::move(tail));
+  }
+}

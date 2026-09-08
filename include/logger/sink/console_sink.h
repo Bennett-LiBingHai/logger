@@ -8,7 +8,7 @@ class ConsoleSink : public LogSink {
   ConsoleSink(LogLevel errlevel = LogLevel::ERROR);
 
   // 打印日志,输入格式化后的信息
-  void log(const FormatResult& result) override;
+  bool log(const FormatResult& result) override;
 
   // 刷新日志缓冲区
   void flush() override;

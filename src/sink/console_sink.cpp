@@ -1,17 +1,14 @@
 #include "logger/sink/console_sink.h"
 
-#include <fstream>
-#include <sstream>
+#include <iostream>
 
 ConsoleSink::ConsoleSink(LogLevel errlevel) : errlevel_{errlevel} {}
 
 // 打印日志,输入格式化后的信息
-void ConsoleSink::log(const FormatResult& result) {
-  if (result.level < errlevel_) {
-    std::cout << result;
-  } else {
-    std::cerr << result;
-  }
+bool ConsoleSink::log(const FormatResult& result) {
+  std::ostream& os = (result.level < errlevel_) ? std::cout : std::cerr;
+  os << result;
+  return !os.fail();
 }
 
 // 刷新日志缓冲区

@@ -487,12 +487,12 @@ Logger → stdout + file
 Logger → custom sink
 ```
 
-例如（当前已有 ConsoleSink、SingleFileSink、MultiFileSink）：
+例如：
 
 ```cpp
 Logger::get_instance().add_sink(std::make_shared<ConsoleSink>());
 Logger::get_instance().add_sink(
-    std::make_shared<SingleFileSink>("/var/log/app.log"));
+    std::make_shared<FileSink>(FileSinkConfig{"/var/log/"}));
 ```
 
 ### 2. 自定义 Sink
@@ -503,7 +503,7 @@ Logger::get_instance().add_sink(
 class LogSink {
 public:
     virtual ~LogSink() = default;
-    virtual void log(const std::string& formatted_msg) = 0;
+    virtual bool log(const FormatResult& result) = 0;  // 返回是否写入成功
     virtual void flush() = 0;
 };
 ```
@@ -525,7 +525,7 @@ app-2026-09-01.log
 app-2026-09-02.log
 ```
 
-支持大小与时间结合的轮转（当前 MultiFileSink 已实现：按时间间隔切分，期间超大小也切分）。
+支持大小与时间结合的轮转
 
 ### 4. 日志保留策略
 
@@ -533,17 +533,12 @@ app-2026-09-02.log
 
 - 单文件最大大小
 - 最大保留文件数
-- 最大保留时间
-- 是否压缩
-- 是否删除旧文件
 
 例如（配合当前 `logger::literals` 字面量）：
 
 ```text
 max_size=100_mb
 max_backups=10
-max_age=30d
-compress=true
 ```
 
 ### 5. 文件异常处理
@@ -563,11 +558,8 @@ compress=true
 提供配置：
 
 ```text
-Ignore
-FallbackToStderr
-Block
-Drop
-ReturnError
+FallbackToStderr //降级到stderr
+Drop             //丢弃该日志
 ```
 
 生产环境建议默认：

@@ -18,7 +18,7 @@ set(SRC_FILES
     ${CMAKE_SOURCE_DIR}/src/formatter/text_formatter.cpp
     ${CMAKE_SOURCE_DIR}/src/formatter/json_formatter.cpp
     ${CMAKE_SOURCE_DIR}/src/sink/console_sink.cpp
-    ${CMAKE_SOURCE_DIR}/src/sink.cpp
+    ${CMAKE_SOURCE_DIR}/src/sink/file_sink.cpp
     ${CMAKE_SOURCE_DIR}/src/field.cpp
     ${CMAKE_SOURCE_DIR}/src/logger.cpp
     ${CMAKE_SOURCE_DIR}/src/utils.cpp
@@ -51,6 +51,7 @@ if(BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/test/unit/test_field.cpp
         ${CMAKE_SOURCE_DIR}/test/unit/test_format.cpp
         ${CMAKE_SOURCE_DIR}/test/unit/test_json_formatter.cpp
+        ${CMAKE_SOURCE_DIR}/test/unit/test_file_sink.cpp
         ${CMAKE_SOURCE_DIR}/test/unit/test_logger.cpp
         ${CMAKE_SOURCE_DIR}/test/integration/test_concurrency.cpp
     )

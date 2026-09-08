@@ -1,6 +1,6 @@
 # Logger
 
-一个 C++17 的日志库。当前进度：**M2 结构化日志与格式化系统**。
+一个 C++17 的日志库。当前进度：**M3 输出系统与文件管理**。
 
 ## 特性
 
@@ -14,6 +14,9 @@
 - 全局日志级别过滤
 - 多线程安全（互斥锁保护，TSan 可验证）
 - 超长日志自动截断
+- 文件输出 + 按大小/时间自动轮转，可限制保留文件数
+- 文件异常自愈（目录缺失自动创建、文件被外部删除自动重开）
+- 写失败策略（降级 stderr / 丢弃并计数），失败不崩溃
 
 ## 依赖
 
@@ -122,6 +125,7 @@ serviceLogger.info("server started");  // 自动带 service / version
 | `time_format` | `TimeFormat::ISO8601` | 时间格式 |
 | `use_utc_time` | `false` | 是否使用 UTC（否则本地时间） |
 | `format` | `LogFormat::TEXT` | 输出格式：`TEXT` / `JSON` |
+| `log_fail_strategy` | `LogFailStrategy::FallbackToStderr` | 写失败策略：`FallbackToStderr` / `Drop` |
 
 ```cpp
 LogConfig cfg;
@@ -144,6 +148,23 @@ JSON（`cfg.format = LogFormat::JSON`）：
 {"time": "2026-09-04T11:50:32.077", "level": "info", "msg": "order created", "order_id": "ORD-1001", "amount": 99.5}
 ```
 
+## 文件输出
+
+```cpp
+#include <logger/sink/file_sink.h>
+
+FileSinkConfig fc;
+fc.dir = "/var/log/app";                 // 日志目录
+fc.date_interval_h = 24;                 // 按时间切分间隔（0 = 只按大小）
+fc.max_file_size = 100 * 1024 * 1024;    // 单文件最大字节（0 = 只按时间）
+fc.max_backups = 10;                     // 最多保留文件数（0 = 不删除）
+Logger::get_instance().add_sink(std::make_shared<FileSink>(fc));
+```
+
+- 文件名：日期切分用 `YYYY_MM_DD_HH.log`，大小切分在其后追加 `.1` / `.2` …
+- 目录缺失自动创建；文件被外部删除后，下次写入自动重开
+- 写失败（磁盘满/权限/句柄失效）不会崩溃，由 `log_fail_strategy` 兜底，并累计 `Logger::stats()`
+
 ## 测试
 
 ```bash
@@ -152,7 +173,7 @@ cmake --build build
 ctest --test-dir build
 ```
 
-- `test_logger`：单元 + 集成用例（级别、过滤、`{}` 格式化、结构化字段、JSON、去重、并发等）
+- `test_logger`：单元 + 集成用例（级别、过滤、`{}` 格式化、结构化字段、JSON、去重、文件轮转、失败策略、并发等）
 - `test_console`：手动观察 stderr 分流的用例
 
 ### Sanitizer
@@ -184,7 +205,8 @@ logger/
 │   ├── formatter/text_formatter.h
 │   ├── formatter/json_formatter.h
 │   ├── sink.h                      # Sink 抽象
-│   └── sink/console_sink.h         # 控制台 Sink
+│   ├── sink/console_sink.h         # 控制台 Sink
+│   └── sink/file_sink.h            # 文件 Sink（轮转）
 ├── src/                            # 实现
 ├── examples/                       # 可运行示例
 ├── test/                           # 单元 + 集成测试
@@ -226,4 +248,4 @@ pre-commit install --hook-type commit-msg
 
 ## 里程碑
 
-完整路线见 [docs/milestone.md](docs/milestone.md)。当前完成 **M2：结构化日志与格式化系统**。
+完整路线见 [docs/milestone.md](docs/milestone.md)。当前完成 **M3：输出系统与文件管理**。
