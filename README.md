@@ -18,7 +18,7 @@
 - 文件异常自愈（目录缺失自动创建、文件被外部删除自动重开）
 - 写失败策略（降级 stderr / 丢弃并计数），失败不崩溃
 - 异步写入（可选开关，惰性启动后台线程，业务线程入队即返回）
-- 队列满策略（Block / DropNewest / DropOldest / DropDebug / SyncFallback）
+- 队列满策略（Block / DropNewest / DropOldest / DropDebug）
 - 优雅关闭（`close()` / 析构自动等待队列清空并刷盘）
 
 ## 依赖
@@ -131,7 +131,7 @@ serviceLogger.info("server started");  // 自动带 service / version
 | `log_fail_strategy` | `LogFailStrategy::FallbackToStderr` | 写失败策略：`FallbackToStderr` / `Drop` |
 | `async` | `false` | 异步写入开关（`set_config` 时惰性启动后台线程） |
 | `buffer_size` | `10000` | 异步队列最大长度 |
-| `asy_que_ful_strategy` | `AsyQueFulStrategy::Block` | 队列满策略：`Block` / `DropNewest` / `DropOldest` / `DropDebug` / `SyncFallback` |
+| `asy_que_ful_strategy` | `AsyQueFulStrategy::Block` | 队列满策略：`Block` / `DropNewest` / `DropOldest` / `DropDebug` |
 
 ```cpp
 LogConfig cfg;
@@ -188,7 +188,7 @@ Logger::get_instance().flush_all();              // 等队列清空并写完
 ```
 
 > 异步一旦开启即不可回退（后台线程常驻）；错误/致命级别日志如需「不丢」保证，可把
-> `asy_que_ful_strategy` 设为 `Block` 或 `SyncFallback`。
+> `asy_que_ful_strategy` 设为 `Block`。
 
 队列满时的行为由 `asy_que_ful_strategy` 决定：
 
@@ -198,7 +198,6 @@ Logger::get_instance().flush_all();              // 等队列清空并写完
 | `DropNewest` | 丢弃新日志 |
 | `DropOldest` | 丢弃最旧日志 |
 | `DropDebug` | 优先丢弃低级别日志，保留新日志 |
-| `SyncFallback` | 改为同步直写（绕过队列） |
 
 优雅关闭：`close()`（或析构）会停止接收新日志、等待队列消费完并刷新 Sink，返回统计信息。
 

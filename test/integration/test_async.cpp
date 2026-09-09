@@ -205,32 +205,3 @@ TEST(AsyncQueueFullTest, DropDebugPrefersDroppingLowLevel) {
   EXPECT_FALSE(sink->contains("info0"));
   EXPECT_FALSE(sink->contains("info1"));
 }
-
-// 队列满策略：SyncFallback —— 队列满时改为同步直写，不丢且绕过队列
-TEST(AsyncQueueFullTest, SyncFallbackWritesSynchronously) {
-  auto sink = std::make_shared<GateSink>(1);  // 只阻塞第一次 log()（即 seed，卡住消费者）
-  Logger::get_instance().add_sink(sink);
-
-  LogConfig cfg;
-  cfg.async = true;
-  cfg.buffer_size = 1;
-  cfg.asy_que_ful_strategy = AsyQueFulStrategy::SyncFallback;
-  Logger::get_instance().set_config(cfg);
-
-  Logger::get_instance().info("seed");
-  sink->wait_received(1);
-
-  Logger::get_instance().info("fill");  // 入队，队列满（size 1）
-  Logger::get_instance().info("sync");  // 满 → SyncFallback → 同步直写，立即进入 sink
-
-  // 在放行消费者之前，sync 应已同步写入（fill 仍在队列里）
-  EXPECT_TRUE(sink->contains("sync"));
-  EXPECT_FALSE(sink->contains("fill"));
-
-  sink->open();
-  Logger::get_instance().flush_all();
-
-  ASSERT_EQ(sink->size(), 3u);  // seed + fill + sync
-  EXPECT_TRUE(sink->contains("fill"));
-  EXPECT_TRUE(sink->contains("sync"));
-}

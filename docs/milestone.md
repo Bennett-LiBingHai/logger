@@ -642,7 +642,6 @@ Logger::get_instance().configure(config);
 | DropNewest | 丢弃新日志 |
 | DropOldest | 丢弃旧日志 |
 | DropDebug | 优先丢弃低级别日志 |
-| SyncFallback | 队列满时改为同步写入 |
 
 推荐支持按级别配置：
 

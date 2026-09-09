@@ -277,15 +277,6 @@ void Logger::log_impl(LogLevel logLevel, const char* file, int line, const char*
         drop_debug(LogData{std::move(msg), less});
         break;
       }
-      case AsyQueFulStrategy::SyncFallback: {
-        std::vector<std::shared_ptr<LogSink>> fb_sinks;
-        {
-          std::unique_lock<std::mutex> lock(impl_->mtx);
-          fb_sinks = impl_->sinks;
-        }
-        log_impl_sync(msg, config, fb_sinks, less);
-        break;
-      }
       default: {
         return;
       }

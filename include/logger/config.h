@@ -20,11 +20,10 @@ enum class TimeFormat {
 
 // 异步日志队列满时的策略
 enum class AsyQueFulStrategy {
-  Block = 0,    // 阻塞调用方，尽量不丢日志
-  DropNewest,   // 丢弃新日志
-  DropOldest,   // 丢弃旧日志
-  DropDebug,    // 优先丢弃低级别日志
-  SyncFallback  // 队列满时改为同步写入
+  Block = 0,   // 阻塞调用方，尽量不丢日志
+  DropNewest,  // 丢弃新日志
+  DropOldest,  // 丢弃旧日志
+  DropDebug,   // 优先丢弃低级别日志
 };
 
 // 日志自身统计（M3 起步，M6 扩展）
