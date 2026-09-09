@@ -1,6 +1,6 @@
 # Logger
 
-一个 C++17 的日志库。当前进度：**M3 输出系统与文件管理**。
+一个 C++17 的日志库。当前进度：**M4 异步、并发与高性能**。
 
 ## 特性
 
@@ -17,6 +17,9 @@
 - 文件输出 + 按大小/时间自动轮转，可限制保留文件数
 - 文件异常自愈（目录缺失自动创建、文件被外部删除自动重开）
 - 写失败策略（降级 stderr / 丢弃并计数），失败不崩溃
+- 异步写入（可选开关，惰性启动后台线程，业务线程入队即返回）
+- 队列满策略（Block / DropNewest / DropOldest / DropDebug / SyncFallback）
+- 优雅关闭（`close()` / 析构自动等待队列清空并刷盘）
 
 ## 依赖
 
@@ -126,6 +129,9 @@ serviceLogger.info("server started");  // 自动带 service / version
 | `use_utc_time` | `false` | 是否使用 UTC（否则本地时间） |
 | `format` | `LogFormat::TEXT` | 输出格式：`TEXT` / `JSON` |
 | `log_fail_strategy` | `LogFailStrategy::FallbackToStderr` | 写失败策略：`FallbackToStderr` / `Drop` |
+| `async` | `false` | 异步写入开关（`set_config` 时惰性启动后台线程） |
+| `buffer_size` | `10000` | 异步队列最大长度 |
+| `asy_que_ful_strategy` | `AsyQueFulStrategy::Block` | 队列满策略：`Block` / `DropNewest` / `DropOldest` / `DropDebug` / `SyncFallback` |
 
 ```cpp
 LogConfig cfg;
@@ -165,6 +171,37 @@ Logger::get_instance().add_sink(std::make_shared<FileSink>(fc));
 - 目录缺失自动创建；文件被外部删除后，下次写入自动重开
 - 写失败（磁盘满/权限/句柄失效）不会崩溃，由 `log_fail_strategy` 兜底，并累计 `Logger::stats()`
 
+## 异步写入
+
+默认同步写入（API 返回即写完）。开启异步后，业务线程只把日志压入内存队列即返回，
+由后台线程负责格式化与写 Sink，适合高并发高吞吐场景：
+
+```cpp
+LogConfig cfg;
+cfg.async = true;
+cfg.buffer_size = 10000;                         // 队列最大长度
+cfg.asy_que_ful_strategy = AsyQueFulStrategy::Block;
+Logger::get_instance().set_config(cfg);          // 惰性启动后台线程
+
+LOG_INFO("async message {}", 42);
+Logger::get_instance().flush_all();              // 等队列清空并写完
+```
+
+> 异步一旦开启即不可回退（后台线程常驻）；错误/致命级别日志如需「不丢」保证，可把
+> `asy_que_ful_strategy` 设为 `Block` 或 `SyncFallback`。
+
+队列满时的行为由 `asy_que_ful_strategy` 决定：
+
+| 策略 | 队列满时行为 |
+|---|---|
+| `Block` | 阻塞调用方，尽量不丢日志 |
+| `DropNewest` | 丢弃新日志 |
+| `DropOldest` | 丢弃最旧日志 |
+| `DropDebug` | 优先丢弃低级别日志，保留新日志 |
+| `SyncFallback` | 改为同步直写（绕过队列） |
+
+优雅关闭：`close()`（或析构）会停止接收新日志、等待队列消费完并刷新 Sink，返回统计信息。
+
 ## 测试
 
 ```bash
@@ -175,6 +212,37 @@ ctest --test-dir build
 
 - `test_logger`：单元 + 集成用例（级别、过滤、`{}` 格式化、结构化字段、JSON、去重、文件轮转、失败策略、并发等）
 - `test_console`：手动观察 stderr 分流的用例
+- `test_async`：异步模式（并发无损、五种队列满策略）
+- `test_async_close`：异步优雅关闭（`close()` 刷出剩余日志）
+
+### 性能基准
+
+零外部依赖的自研 benchmark，输出吞吐（条/秒）与 P50/P95/P99 延迟：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release   # 建议 Release 下测性能
+cmake --build build --target logger_benchmark
+./build/logger_benchmark
+```
+
+覆盖场景：关闭级别、同步文本、同步 JSON、带字段文本、并发、异步文本、文件 Sink。
+
+当前实测结果（开发机 WSL2 / gcc 13 / `-O2`，仅作量级参考）：
+
+| 场景 | 吞吐 | 延迟均值 | P99 |
+|---|---:|---:|---:|
+| 关闭级别（级别 `OFF`） | 188M/s | 5 ns | 33 ns |
+| 同步文本 | 923K/s | 1084 ns | 1.9 µs |
+| 同步 JSON | 772K/s | 1295 ns | 1.9 µs |
+| 带字段文本 | 1.06M/s | 939 ns | 1.7 µs |
+| 并发文本（4 线程聚合） | 1.98M/s | 504 ns | — |
+| 异步文本（入队开销） | 1.34M/s | 748 ns | 9.7 µs |
+| 文件 Sink | 510K/s | 1962 ns | 10.9 µs |
+
+> 并发为聚合吞吐；异步文本测业务线程入队开销（后台线程并发写 Sink）。
+
+对照 M4 目标：关闭级别开销接近普通函数调用、同步文本 ≥ 100K/s、异步文本 ≥ 300K/s、
+关键路径 P99 < 1ms——均达标。详细目标见 [docs/milestone.md](docs/milestone.md) 的 M4 章节。
 
 ### Sanitizer
 
@@ -197,19 +265,30 @@ logger/
 ├── include/logger/                 # 公共头文件
 │   ├── logger.h                    # Logger 核心 + LOG_* 宏 + with()
 │   ├── level.h                     # 级别枚举
-│   ├── config.h                    # 配置（含 format 输出格式）
+│   ├── config.h                    # 配置（含 async / 队列满策略）
 │   ├── record.h                    # 日志记录（含结构化字段）
 │   ├── field.h                     # KV 字段 + encode 编码入口
 │   ├── format.h                    # {} 位置参数格式化
 │   ├── formatter.h                 # 格式化结果 FormatResult
 │   ├── formatter/text_formatter.h
 │   ├── formatter/json_formatter.h
+│   ├── literals.h                  # 容量字面量（1_mb 等）
+│   ├── utiils.h                    # 时间 / 通用小工具
 │   ├── sink.h                      # Sink 抽象
 │   ├── sink/console_sink.h         # 控制台 Sink
 │   └── sink/file_sink.h            # 文件 Sink（轮转）
-├── src/                            # 实现
+├── src/                            # 实现（镜像 include 结构）
+│   ├── logger.cpp
+│   ├── field.cpp
+│   ├── utils.cpp
+│   ├── formatter/
+│   └── sink/
 ├── examples/                       # 可运行示例
+├── benchmark/                      # 性能基准（零外部依赖）
 ├── test/                           # 单元 + 集成测试
+│   ├── test_helpers.h              # 测试用 Sink 等辅助
+│   ├── unit/
+│   └── integration/
 └── docs/                           # 设计文档（milestone.md）
 ```
 
@@ -248,4 +327,4 @@ pre-commit install --hook-type commit-msg
 
 ## 里程碑
 
-完整路线见 [docs/milestone.md](docs/milestone.md)。当前完成 **M3：输出系统与文件管理**。
+完整路线见 [docs/milestone.md](docs/milestone.md)。当前完成 **M4：异步、并发与高性能**。

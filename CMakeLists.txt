@@ -68,4 +68,26 @@ if(BUILD_TESTS)
     target_compile_features(test_console PRIVATE cxx_std_17)
     target_include_directories(test_console PRIVATE ${CMAKE_SOURCE_DIR}/test)
     add_test(NAME test_console COMMAND test_console)
+
+    # 异步日志，独立二进制避免污染单例的同步/异步状态
+    add_executable(test_async ${CMAKE_SOURCE_DIR}/test/integration/test_async.cpp)
+    target_link_libraries(test_async PRIVATE logger GTest::gtest GTest::gtest_main)
+    target_compile_features(test_async PRIVATE cxx_std_17)
+    target_include_directories(test_async PRIVATE ${CMAKE_SOURCE_DIR}/test)
+    add_test(NAME test_async COMMAND test_async)
+
+    # 异步优雅关闭，独立二进制（close() 会停止异步线程，单例不可复用）
+    add_executable(test_async_close ${CMAKE_SOURCE_DIR}/test/integration/test_async_close.cpp)
+    target_link_libraries(test_async_close PRIVATE logger GTest::gtest GTest::gtest_main)
+    target_compile_features(test_async_close PRIVATE cxx_std_17)
+    target_include_directories(test_async_close PRIVATE ${CMAKE_SOURCE_DIR}/test)
+    add_test(NAME test_async_close COMMAND test_async_close)
+endif()
+
+# 性能基准（零外部依赖，自研计时器；不在 CTest 中默认运行，手动执行 ./build/logger_benchmark）
+option(BUILD_BENCHMARKS "Build benchmarks" ON)
+if(BUILD_BENCHMARKS)
+    add_executable(logger_benchmark ${CMAKE_SOURCE_DIR}/benchmark/logger_benchmark.cpp)
+    target_link_libraries(logger_benchmark PRIVATE logger)
+    target_compile_features(logger_benchmark PRIVATE cxx_std_17)
 endif()
