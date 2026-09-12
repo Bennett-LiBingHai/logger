@@ -6,6 +6,13 @@
   return logger;
 }
 
+// 根据配置选择格式化器
+FormatResult Logger::format_record(const Record& msg, const LogConfig& config, bool less) {
+  if (config.format == LogFormat::JSON)
+    return JsonFormatter::format(msg, config, less);
+  return TextFormatter::format(msg, config, less);
+}
+
 // 序列化并写入 sinks，返回 {写失败数, 丢弃数},不持锁
 std::pair<unsigned long long, unsigned long long> write_to_sinks(
     const FormatResult& result, const LogConfig& config,
@@ -143,36 +150,6 @@ void Logger::write_one(LogData data) {
     impl_->stats.failed_writes += failed;
     impl_->stats.dropped += dropped;
   }
-}
-
-// 追加字段：空 key 跳过
-void Logger::append_field(std::vector<Field>& fields, Field f) {
-  if (!f.key.empty())
-    fields.emplace_back(std::move(f));
-}
-
-// 递归终止
-std::tuple<> Logger::split_fields(std::vector<Field>& /*fields*/) {
-  return {};
-}
-
-// 字段去重：同 key 后写覆盖（保留最后一个值），位置取首次出现，保持顺序
-void Logger::dedup_fields(std::vector<Field>& fields) {
-  if (fields.size() < 2)
-    return;
-  std::vector<Field> out;
-  out.reserve(fields.size());
-  std::unordered_map<std::string, size_t> index;  // key → 在 out 中的位置
-  for (auto& f : fields) {
-    auto it = index.find(f.key);
-    if (it == index.end()) {
-      index.emplace(f.key, out.size());
-      out.emplace_back(std::move(f));
-    } else {
-      out[it->second].value = std::move(f.value);  // 覆盖值，保留首次位置
-    }
-  }
-  fields = std::move(out);
 }
 
 // 移除队列级别最低的一条日志，并压入新日志

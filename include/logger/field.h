@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <exception>
 #include <ostream>
 #include <sstream>
 #include <string>
@@ -10,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "logger/stacktrace.h"
 #include "logger/utiils.h"
 
 // ===== 文本 / JSON 共用的底层编码入口 =====
@@ -92,8 +94,16 @@ void encode(const std::vector<T>& v, std::string& o, bool json) {
   o += ']';
 }
 
+// std::exception
+inline void encode(std::exception v, std::string& o, bool json) {
+  encode(v.what(), o, json);
+}
+
 // 时间点：ISO8601 本地时间（含毫秒），定义在 field.cpp
 void encode(std::chrono::system_clock::time_point v, std::string& o, bool json);
+
+// 堆栈：文本折叠为单行、JSON 转义换行，定义在 stacktrace.cpp
+void encode(const StackTrace& v, std::string& o, bool json);
 
 // 自定义序列化类型：具有 operator<< 的类型回退到流式输出（文本原样，JSON 按字符串）
 template <typename T, std::enable_if_t<!std::is_arithmetic_v<T> && !std::is_enum_v<T>, int> = 0,
@@ -172,4 +182,27 @@ FieldValue FieldValue::from(T&& v) {
   fv.clone_ = [](const void* p) -> void* { return new U(*static_cast<const U*>(p)); };
   fv.destroy_ = [](void* p) { delete static_cast<U*>(p); };
   return fv;
+}
+
+// 追加字段：空 key 跳过
+void append_field(std::vector<Field>& fields, Field f);
+
+// 字段去重：同 key 后写覆盖（保留最后一个值），位置取首次出现，保持顺序
+void dedup_fields(std::vector<Field>& fields);
+
+// 递归终止
+inline std::tuple<> split_fields(std::vector<Field>& /*fields*/) {
+  return {};
+}
+
+// 拆分可变参数：Field 进 fields（保持顺序），其余进 tuple 作为位置参数（保持顺序）
+template <typename T, typename... Rest>
+auto split_fields(std::vector<Field>& fields, T&& first, Rest&&... rest) {
+  if constexpr (std::is_same_v<std::decay_t<T>, Field>) {
+    append_field(fields, std::forward<T>(first));  // 空 key 跳过
+    return split_fields(fields, std::forward<Rest>(rest)...);
+  } else {
+    auto tail = split_fields(fields, std::forward<Rest>(rest)...);
+    return std::tuple_cat(std::forward_as_tuple(std::forward<T>(first)), std::move(tail));
+  }
 }

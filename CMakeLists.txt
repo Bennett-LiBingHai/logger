@@ -15,12 +15,15 @@ if(LOGGER_SANITIZE)
 endif()
 
 set(SRC_FILES
+    ${CMAKE_SOURCE_DIR}/src/crash_handler.cpp
     ${CMAKE_SOURCE_DIR}/src/formatter/text_formatter.cpp
     ${CMAKE_SOURCE_DIR}/src/formatter/json_formatter.cpp
     ${CMAKE_SOURCE_DIR}/src/sink/console_sink.cpp
     ${CMAKE_SOURCE_DIR}/src/sink/file_sink.cpp
     ${CMAKE_SOURCE_DIR}/src/field.cpp
     ${CMAKE_SOURCE_DIR}/src/logger.cpp
+    ${CMAKE_SOURCE_DIR}/src/stacktrace.cpp
+    ${CMAKE_SOURCE_DIR}/src/trace.cpp
     ${CMAKE_SOURCE_DIR}/src/utils.cpp
     )
 
@@ -31,7 +34,13 @@ target_compile_features(logger PUBLIC cxx_std_17)
 target_include_directories(logger PUBLIC ${CMAKE_SOURCE_DIR}/include)
 
 find_package(Threads REQUIRED)
-target_link_libraries(logger PUBLIC Threads::Threads)
+# dladdr 需要 libdl（glibc ≥ 2.34 已并入 libc，CMAKE_DL_LIBS 会自动处理为空）
+target_link_libraries(logger PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
+
+# 堆栈符号化依赖动态符号表，-rdynamic 必须作用在最终可执行文件上 → INTERFACE 传递
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_link_options(logger INTERFACE -rdynamic)
+endif()
 
 # 可运行示例
 add_executable(logger_example ${CMAKE_SOURCE_DIR}/examples/basic_usage.cpp)
@@ -53,6 +62,10 @@ if(BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/test/unit/test_json_formatter.cpp
         ${CMAKE_SOURCE_DIR}/test/unit/test_file_sink.cpp
         ${CMAKE_SOURCE_DIR}/test/unit/test_logger.cpp
+        ${CMAKE_SOURCE_DIR}/test/unit/test_context.cpp
+        ${CMAKE_SOURCE_DIR}/test/unit/test_error.cpp
+        ${CMAKE_SOURCE_DIR}/test/unit/test_stacktrace.cpp
+        ${CMAKE_SOURCE_DIR}/test/unit/test_trace.cpp
         ${CMAKE_SOURCE_DIR}/test/integration/test_concurrency.cpp
     )
 

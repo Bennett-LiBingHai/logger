@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <tuple>
 #include <type_traits>
@@ -15,19 +16,15 @@
 #include <vector>
 
 #include "logger/config.h"
-#include "logger/field.h"
+#include "logger/context.h"
+#include "logger/error.h"
 #include "logger/format.h"
 #include "logger/formatter/json_formatter.h"
 #include "logger/formatter/text_formatter.h"
 #include "logger/record.h"
 #include "logger/sink.h"
-
-// 根据配置选择格式化器
-inline FormatResult format_record(const Record& msg, const LogConfig& config, bool less) {
-  if (config.format == LogFormat::JSON)
-    return JsonFormatter::format(msg, config, less);
-  return TextFormatter::format(msg, config, less);
-}
+#include "logger/stacktrace.h"
+#include "logger/trace.h"
 
 // 日志器
 class Logger {
@@ -39,13 +36,13 @@ class Logger {
   template <typename... Args>
   void log(LogLevel logLevel, const char* file, int line, const char* func, const char* fmt,
            Args&&... args) noexcept {
-    log_impl(logLevel, file, line, func, fmt, false, std::forward<Args>(args)...);
+    log_impl(logLevel, file, line, func, fmt, std::forward<Args>(args)...);
   }
 
   // 打印日志带格式（直接调用，不带文件/行/函数）
   template <typename... Args>
   void log(LogLevel logLevel, const char* fmt, Args&&... args) noexcept {
-    log_impl(logLevel, nullptr, 0, nullptr, fmt, true, std::forward<Args>(args)...);
+    log_impl(logLevel, nullptr, 0, nullptr, fmt, std::forward<Args>(args)...);
   }
 
   // 打印trace级别日志
@@ -79,6 +76,25 @@ class Logger {
     log(LogLevel::FATAL, fmt, std::forward<Args>(args)...);
   }
 
+  // 记录异常：自动展开为 error / error_type / error_chain 字段（LOG_EXCEPTION 宏入口）
+  // 额外 KV 字段照常附加，堆栈不是特例：
+  //   LOG_EXCEPTION("db failed", e)
+  //   LOG_EXCEPTION("db failed", e, KV("stacktrace", StackTrace::capture()))
+  template <typename... Args>
+  void log_exception(LogLevel level, const char* file, int line, const char* func, const char* msg,
+                     const std::exception& e, Args&&... args) noexcept;
+  template <typename... Args>
+  void log_exception(LogLevel level, const char* file, int line, const char* func, const char* msg,
+                     const std::exception_ptr& e, Args&&... args) noexcept;
+
+  // 结构化异常接口（不带文件/行/函数）
+  void exception(const char* msg, const std::exception& e) noexcept {
+    log_exception(LogLevel::ERROR, nullptr, 0, nullptr, msg, e);
+  }
+  void exception(const char* msg, const std::exception_ptr& e) noexcept {
+    log_exception(LogLevel::ERROR, nullptr, 0, nullptr, msg, e);
+  }
+
   // 增加输出槽
   void add_sink(std::shared_ptr<LogSink> log_sink);
 
@@ -100,6 +116,14 @@ class Logger {
   // 预绑定字段：共享 sinks/config/mutex，返回带额外字段的子 Logger
   template <typename... Args>
   Logger with(Args&&... args);
+
+  // 统一业务字段：命名固定的字段，避免各处手写 key 拼错（M5）
+  Logger with_request_id(std::string_view id);
+  Logger with_trace_id(std::string_view id);
+  Logger with_span_id(std::string_view id);
+  Logger with_user_id(std::string_view id);
+  Logger with_service(std::string_view name);
+  Logger with_trace(const TraceContext& ctx);  // 一次带上 trace_id / span_id / trace_flags
 
   // 析构：停止异步线程并刷盘
   ~Logger();
@@ -130,19 +154,6 @@ class Logger {
     std::thread async_thread;
   };
 
-  // 追加字段：空 key 跳过
-  void append_field(std::vector<Field>& fields, Field f);
-
-  // 递归终止
-  std::tuple<> split_fields(std::vector<Field>& /*fields*/);
-
-  // 拆分可变参数：Field 进 fields（保持顺序），其余进 tuple 作为位置参数（保持顺序）
-  template <typename T, typename... Rest>
-  auto split_fields(std::vector<Field>& fields, T&& first, Rest&&... rest);
-
-  // 字段去重：同 key 后写覆盖（保留最后一个值），位置取首次出现，保持顺序
-  void dedup_fields(std::vector<Field>& fields);
-
   // 后台线程主循环
   void async_loop();
 
@@ -156,12 +167,18 @@ class Logger {
   void log_impl_sync(const Record& msg, const LogConfig& config,
                      const std::vector<std::shared_ptr<LogSink>>& sinks, bool less);
 
-  Logger() = default;
-
   // log前分流
   template <typename... Args>
   void log_impl(LogLevel logLevel, const char* file, int line, const char* func, const char* fmt,
-                bool less, Args&&... args) noexcept;
+                Args&&... args) noexcept;
+
+  // 异常字段展开后复用 log_impl；无嵌套时 error_chain 用空 key 占位，由 append_field 跳过
+  template <typename... Args>
+  void log_exception_impl(LogLevel level, const char* file, int line, const char* func,
+                          const char* msg, const ExceptionInfo& info, Args&&... args) noexcept;
+
+  // 根据配置选择格式化器
+  FormatResult format_record(const Record& msg, const LogConfig& config, bool less);
 
   std::shared_ptr<Impl> impl_ = std::make_shared<Impl>();
   std::vector<Field> fields_;
@@ -200,6 +217,9 @@ constexpr const char* filename_of(const char* path) {
 #define LOG_FATAL(fmt, ...)                                                          \
   Logger::get_instance().log(LogLevel::FATAL, __FILENAME__, __LINE__, __func__, fmt, \
                              ##__VA_ARGS__)  // 致命
+#define LOG_EXCEPTION(msg, exc, ...)                                                             \
+  Logger::get_instance().log_exception(LogLevel::ERROR, __FILENAME__, __LINE__, __func__, (msg), \
+                                       (exc), ##__VA_ARGS__)  // 记录异常并自动展开字段
 
 // 预绑定字段：共享 sinks/config/mutex，返回带额外字段的子 Logger
 template <typename... Args>
@@ -213,11 +233,38 @@ Logger Logger::with(Args&&... args) {
   return child;
 }
 
+// ===== 统一业务字段（M5）=====
+// 命名固定的常用字段，避免调用方各处手写 key 拼错
+inline Logger Logger::with_request_id(std::string_view id) {
+  return with(KV("request_id", id));
+}
+
+inline Logger Logger::with_trace_id(std::string_view id) {
+  return with(KV("trace_id", id));
+}
+
+inline Logger Logger::with_span_id(std::string_view id) {
+  return with(KV("span_id", id));
+}
+
+inline Logger Logger::with_user_id(std::string_view id) {
+  return with(KV("user_id", id));
+}
+
+inline Logger Logger::with_service(std::string_view name) {
+  return with(KV("service", name));
+}
+
+inline Logger Logger::with_trace(const TraceContext& ctx) {
+  return with(KV("trace_id", ctx.trace_id), KV("span_id", ctx.span_id),
+              KV("trace_flags", ctx.trace_flags));
+}
+
 // log前分流
 template <typename... Args>
 void Logger::log_impl(LogLevel logLevel, const char* file, int line, const char* func,
-                      const char* fmt, bool less, Args&&... args) noexcept {
-  // 1. 级别过滤（lock-free 早退）+ 一次持锁快照字段/config/sinks
+                      const char* fmt, Args&&... args) noexcept {
+  // 级别过滤（lock-free 早退）+ 一次持锁快照字段/config/sinks
   if (logLevel < impl_->log_level.load(std::memory_order_relaxed))
     return;
 
@@ -225,6 +272,7 @@ void Logger::log_impl(LogLevel logLevel, const char* file, int line, const char*
   LogConfig config;
   std::vector<std::shared_ptr<LogSink>> sinks;
   bool is_async;
+  bool stacktrace;
   {
     std::unique_lock<std::mutex> lock(impl_->mtx);
     fields = fields_;
@@ -232,9 +280,19 @@ void Logger::log_impl(LogLevel logLevel, const char* file, int line, const char*
     is_async = impl_->async_running.load(std::memory_order_acquire);
     if (!is_async)
       sinks = impl_->sinks;  // 异步路径由后台线程自行快照，省掉这笔拷贝
+    stacktrace = config.stacktrace == StackTraceMode::ALWAYS ||
+                 (config.stacktrace == StackTraceMode::FATAL && logLevel >= LogLevel::FATAL);
   }
 
-  // 2. 物化 Record（无锁，本地工作）
+  // 和并作用域数据
+  ContextScope::merge_into(fields);
+
+  // Fatal 自动采集堆栈（显式 KV("stacktrace", ...) 由调用方自行附加）
+  if (stacktrace)
+    append_field(fields, KV("stacktrace", StackTrace::capture(1, config.stacktrace_depth,
+                                                              config.max_stacktrace_length)));
+
+  // 物化 Record（无锁，本地工作）
   auto positional = split_fields(fields, std::forward<Args>(args)...);
   dedup_fields(fields);  // 同 key 后写覆盖
   std::string content = std::apply([&](auto&&... pa) { return format(fmt, pa...); }, positional);
@@ -247,6 +305,8 @@ void Logger::log_impl(LogLevel logLevel, const char* file, int line, const char*
              line,
              func,
              std::move(fields)};
+
+  const bool less = (file == nullptr);
 
   // 3. 路由：异步入队 / 同步直写
   if (is_async) {
@@ -291,14 +351,30 @@ void Logger::log_impl(LogLevel logLevel, const char* file, int line, const char*
   }
 }
 
-// 拆分可变参数：Field 进 fields（保持顺序），其余进 tuple 作为位置参数（保持顺序）
-template <typename T, typename... Rest>
-auto Logger::split_fields(std::vector<Field>& fields, T&& first, Rest&&... rest) {
-  if constexpr (std::is_same_v<std::decay_t<T>, Field>) {
-    append_field(fields, std::forward<T>(first));  // 空 key 跳过
-    return split_fields(fields, std::forward<Rest>(rest)...);
-  } else {
-    auto tail = split_fields(fields, std::forward<Rest>(rest)...);
-    return std::tuple_cat(std::forward_as_tuple(std::forward<T>(first)), std::move(tail));
-  }
+// 异常字段展开后复用 log_impl：error / error_type 恒有，error_chain 仅在嵌套时产生
+// （无嵌套时用空 key 占位，append_field 会跳过它）
+template <typename... Args>
+void Logger::log_exception_impl(LogLevel level, const char* file, int line, const char* func,
+                                const char* msg, const ExceptionInfo& info,
+                                Args&&... args) noexcept {
+  Field chain;
+  if (info.has_nested)
+    chain = KV("error_chain", info.chain);
+
+  log_impl(level, file, line, func, msg, KV("error", info.message), KV("error_type", info.type),
+           std::move(chain), std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+void Logger::log_exception(LogLevel level, const char* file, int line, const char* func,
+                           const char* msg, const std::exception& e, Args&&... args) noexcept {
+  log_exception_impl(level, file, line, func, msg, extract_exception(e),
+                     std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+void Logger::log_exception(LogLevel level, const char* file, int line, const char* func,
+                           const char* msg, const std::exception_ptr& e, Args&&... args) noexcept {
+  log_exception_impl(level, file, line, func, msg, extract_exception(e),
+                     std::forward<Args>(args)...);
 }

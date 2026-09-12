@@ -18,6 +18,13 @@ enum class TimeFormat {
   ISO8601 = 0,  // YYYY‑MM‑DDTHH:mm:ss.fff (不带z,是否是本地时间,看config配置)
 };
 
+// 堆栈采集策略（M5）
+enum class StackTraceMode {
+  OFF = 0,  // 完全关闭，含显式 WithStack（生产排障时的全局开关，优先级最高）
+  FATAL,  // 仅 Fatal 自动采集（默认；普通 Error 不采，避免采集/符号化开销）
+  ALWAYS,  // 所有日志自动采集（调试用，开销大）
+};
+
 // 异步日志队列满时的策略
 enum class AsyQueFulStrategy {
   Block = 0,   // 阻塞调用方，尽量不丢日志
@@ -40,6 +47,9 @@ struct LogConfig {
   bool use_utc_time = false;                     // 是否使用0时区时间,否则本地时间
   LogFormat format = LogFormat::TEXT;            // 输出格式：文本 / JSON
   LogFailStrategy log_fail_strategy = LogFailStrategy::FallbackToStderr;  // 日志输出失败策略
+  StackTraceMode stacktrace = StackTraceMode::FATAL;  // 堆栈采集策略,只约束自动采集
+  size_t stacktrace_depth = 10;                       // 单个堆栈最大帧数
+  size_t max_stacktrace_length = 512;                 // 堆栈渲染后字节上限（0 = 不限）
 
   // 异步相关
   bool async = false;  // 异步日志（set_config 时惰性启动后台线程）

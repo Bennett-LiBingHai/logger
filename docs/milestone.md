@@ -785,6 +785,16 @@ void handle_request(const Request& req) {
 - 异步「调用点物化」：thread_local 字段必须在业务线程的 `log()` 内、入队列前合并进 Record，后台写入线程读不到业务线程的 thread_local
 - thread_local 不跨线程：子线程 / 线程池拿不到父线程上下文；需延续时显式带字段，或用 `with()` 子 Logger 传值
 - 先过滤后合并：级别判断放在合并上下文之前，关闭级别时不产生 thread_local 读和字段拷贝开销
+- 字段优先级（同 key 覆盖规则，**固定不变**）：
+
+  ```
+  显式 KV  >  ContextScope  >  with() 预绑定
+  ```
+
+  合并顺序即 `with() 字段 → 上下文各帧 → 调用点显式 KV`，`dedup_fields` 的「后写覆盖、位置取首次出现」自然实现该优先级。
+  即：`with()` 是对象级默认值，`ContextScope` 是环境状态，可覆盖前者；调用点显式传来的最优先。
+  上下文各帧之间是**栈序**：后入栈的帧覆盖先入栈的（内层覆盖外层）。
+  不采用「按书写先后取号排序」的时序优先——那会让输出依赖 `with()`/`ContextScope` 在源码中的位置，重构时静默改变日志内容，且新使用者无从得知规则。
 
 自动提取：
 
@@ -808,23 +818,44 @@ auto requestLogger = Logger::get_instance().with(
 
 ### 3. 错误记录
 
-支持：
+一条错误日志有三种写法，只有第三种触发「自动展开」：
 
 ```cpp
-LOG_ERROR("database query failed: {}", e.what());
-
-Logger::get_instance().error("database query failed",
-    KV("err", e),
-);
+LOG_ERROR("db query failed: {}", e.what());       // ① 纯字符串：logger 只记录 msg，不做自动处理
+LOG_ERROR("db query failed", KV("err", e));        // ② 单字段：err=<what()>，一个 KV 一个字段，不展开
+LOG_EXCEPTION("db query failed", e);               // ③ 自动展开：一个异常 → 固定字段集
 ```
 
-自动记录：
+约定：`KV("err", e)` 永远只产生一个字段（值为 `what()`），不破坏「一个 KV = 一个字段」的模型；
+「自动记录」走独立的 `LOG_EXCEPTION` 入口。传字符串（写法 ①）不会触发自动记录——C++ 无法从字符串回溯异常对象。
 
-- error message
-- error type（`typeid(e).name()` 或 `std::error_code` 类别）
-- 嵌套异常链（`std::nested_exception` / `std::throw_with_nested`）
-- stacktrace
-- wrapped error 信息
+`LOG_EXCEPTION` 把异常自动展开成如下字段：
+
+| 字段 | 内容 | 何时出现 |
+|---|---|---|
+| `msg` | 传入的说明文字 | 总是 |
+| `error` | 最内层异常的 `what()` | 总是 |
+| `error_type` | 可读类型名（demangle 后），如 `std::system_error` | 总是 |
+| `error_chain` | 完整嵌套链：外层 `what()` 换行 `  caused by: ` 内层 `what()` | 有嵌套时 |
+| `stacktrace` | 采集点堆栈 | 仅 Fatal / 显式请求 |
+
+JSON 输出示例：
+
+```json
+{
+  "level": "error",
+  "msg": "database query failed",
+  "error": "connection refused",
+  "error_type": "std::system_error",
+  "error_chain": "std::runtime_error: db query failed\n  caused by: std::system_error: connection refused"
+}
+```
+
+实现规则：
+
+- **error type**：`std::exception` 用 `<cxxabi.h>` 的 `abi::__cxa_demangle` 解出可读类型名（Linux 下 GCC/clang 通用，无新依赖）；`std::error_code` 输出 `message (value) [category]`。两套来源各走各的编码，不混。
+- **嵌套链 = wrapped error**：只实现标准 `std::nested_exception`（`std::rethrow_if_nested` 递归解包，生成 `error_chain`）。「wrapped error」不单独作为一种机制——它要么就是嵌套链，要么已涵盖在 `std::error_code` 的底层信息里。
+- **stacktrace**：仅 Fatal 或显式请求时自动采集，普通 Error 默认不采（与「4. 堆栈信息」口径一致）。
 
 ### 4. 堆栈信息
 
@@ -855,27 +886,166 @@ Logger::get_instance().error("database query failed",
 - 崩溃场景通过 signal handler 捕获并记录堆栈
 - 提供显式接口记录堆栈
 
+栈顶库帧的处理：
+
+- 只用 `skip`，统一默认跳 1 帧（丢掉 `StackTrace::capture` 自身），不做事后过滤
+- 取 1 而非 3：`capture` 跨 TU 不会被内联，恒为第 0 帧，`skip=1` 必定只丢它；
+  而「`log_impl`/`log` 各占一帧」是假设——`-O2` 下这两帧被内联掉，多出的 skip
+  会开始吃真实用户帧（实测 `main` 会从堆栈里消失）。调试构建多一两帧噪声好过丢用户帧
+- 曾尝试按符号名过滤（`Logger::` / `StackTrace::` 前缀），已放弃：无法覆盖库内自由函数，
+  且会误伤 `MyLogger::log` 这类同名子串的用户符号——误判的代价（删掉真正出错的那帧）比噪声大
+- `skip` 同样**不保证**丢掉的一定是 `StackTrace::capture`：ASan / TSan 会插入自己的
+  `backtrace` 拦截帧，`capture` 落到第 1 帧。这只是栈顶多一帧噪声，不影响功能；
+  但测试里不要断言"skip=1 后必定不含某帧"，只断言帧数差（工具链无关）
+
+堆栈的预算控制（必须，否则会被整条日志的截断毁掉）：
+
+- 堆栈有**独立预算** `max_stacktrace_length`（默认 512 字节），与 `max_log_item_size` 分开
+- 超预算时**按帧丢弃**（每帧完整），末尾附 `... (+N frames)`
+- 原因：堆栈排在字段末尾，若靠 `max_log_item_size` 兜底做字节级硬切，会切掉行尾 `\n`（TEXT 行结构破坏）、切出非法 JSON（整条被日志管道丢弃），而且用户已经付过采集与符号化开销却看不到内容
+- `stacktrace_depth` 默认 10 帧，与预算配合；显式 `StackTrace::capture()` 也带同样的默认预算，避免调用方绕过
+
+崩溃捕获（L3，独立于前两层）：
+
+- 分三层：**L1 采集**（`backtrace()`）/ **L2 符号化**（`dladdr` + demangle）/ **L3 崩溃捕获**（signal handler）
+- L3 补的缺口：`LOG_FATAL` 是代码**主动**调用的；进程真崩溃（SIGSEGV / SIGABRT / SIGBUS / SIGFPE / SIGILL）时一条日志都不会有，只剩 `Segmentation fault`
+- L3 **不能复用 `StackTrace` 与 `Logger`**：handler 里只能调 async-signal-safe 接口，而
+  `StackTrace::str()` 全程分配（std::string / demangle / snprintf），`Logger` 的 mutex 可能正被崩溃线程持有
+- 因此 L3 是独立实现：只用 `write()` + 自实现的十六进制/十进制格式化 + `backtrace()`
+- 记录内容（**精确现场**）：pid / tid、信号名与编号、`si_code`、故障地址 `si_addr`、
+  出错指令指针 `fault_pc`（取自 `ucontext` 的 `REG_RIP`，**不是** `backtrace` 的栈顶——后者是 handler 与信号跳板）、
+  `rsp` / `rbp`、栈回溯原始地址
+- 每帧附「模块路径+偏移」：偏移是**该模块的链接期地址**，可直接喂 `addr2line`
+  - `dl_iterate_phdr` 的 `dlpi_addr` 就是该模块的 load bias（PIE 下为装载基址，非 PIE 下为 0），
+    所以 `运行时地址 - dlpi_addr` 对主程序与共享库一律成立，**无需判断是否 PIE**
+  - 反面教训：`dladdr` 的 `dli_fbase` 是**第一个 PT_LOAD 段的运行时地址**，不是 load bias；
+    非 PIE 下它等于 `0x400000`（段起始 vaddr），减它会少算 0x400000，使 addr2line 静默解析到错误符号
+- 其它必要处理：
+  - `sigaltstack` 独立信号栈：栈溢出导致的崩溃也能记录
+  - 安装时先调一次 `backtrace()` 热身：它属于 libgcc，首次调用触发动态装载（可能 malloc），不能在 handler 内发生
+  - 写完后 `signal(SIG_DFL)` + 解除阻塞 + `raise`：**保留 core dump 语义**，事后仍可 gdb
+  - 递归崩溃防护（`volatile sig_atomic_t`），失败兜底用 `_exit` 而非 `exit`
+- API：`install_crash_handler(path)`（path 为空写 stderr）/ `uninstall_crash_handler()`
+- 不做符号化，离线还原：
+  ```
+  addr2line -f -C -e <模块路径> <偏移>
+  ```
+- 与已有 handler 的关系（**只接管原本就是默认动作的信号**）：
+  - 非默认 handler（ASan/TSan、JVM 运行时）→ 该信号**不接管**，stderr 提示一句
+  - `SIG_IGN` → 同样不接管：程序有意忽略该信号，接管会把"忽略"变成"崩溃退出"
+  - 为什么不做链式调用：JVM 用 SIGSEGV 实现隐式空指针检查，正常的 null 解引用靠它的
+    handler 修正 PC 后恢复执行；链式调用会让我们在**每次 null 检查**时都写一份假崩溃日志
+  - 因此接管时该信号一定是 `SIG_DFL`，卸载一律恢复 `SIG_DFL`，无需保存旧 handler
+    （只需记住"哪些信号真被接管过"，避免卸载时误动别人的 handler）
+  - `install_crash_handler()` 返回"是否至少接管了一个信号"，全部跳过时为 false
+
 ### 5. Trace 系统集成
 
-支持接入 OpenTelemetry C++ SDK（或自实现 W3C traceparent）：
+**用户要解决什么**
 
-```text
-trace_id
-span_id
-trace_flags
+一个请求跨几个服务、几十条日志，出错后要捞出「这一次请求」的全部记录，靠 grep 关键字是捞不全的。用户的需求分两类：
+
+| 用户处境 | 需求 |
+|---|---|
+| 已经上了链路追踪（Jaeger / Tempo / SkyWalking / OTEL） | 日志里要带上现有的 `trace_id` / `span_id`——能从日志跳到 trace 看全貌，也能从 trace 跳到日志看细节 |
+| 还没上链路追踪 | 至少能把一次请求的多条日志串起来（有个关联 id 就够） |
+| 两者的共同底线 | **不要 logger 自带一套追踪实现，不要绑死具体后端** |
+
+第二类用户的现实是：他们可能下个月就上追踪系统了。所以本库不能要求他们先选好厂商。
+
+**怎么满足**
+
+只做「三个固定字段 + W3C traceparent 编解码」，**不引入 OpenTelemetry C++ SDK**（它会连带 abseil / protobuf / gRPC 一整套重量级依赖，而日志侧要的只是字段值）。字段挂载直接复用 M5.1 的上下文机制，不新增传递方式。
+
+字段规范（名字固定，JSON 下均为字符串）：
+
+| 字段 | 格式 | 说明 |
+|---|---|---|
+| `trace_id` | 32 位小写 hex | 全链路唯一；W3C 规定不得为全 0 |
+| `span_id` | 16 位小写 hex | 当前 span；不得为全 0 |
+| `trace_flags` | 2 位小写 hex | bit0 为 sampled；`"01"` 表示采样 |
+
+**用户怎么用**
+
+场景一：已有追踪系统，从自己的 span 取值
+
+```cpp
+ContextScope ctx{ KV("trace_id", span.trace_id()),
+                  KV("span_id", span.span_id()),
+                  KV("trace_flags", span.sampled() ? "01" : "00") };
+LOG_INFO("handling request");   // 自动带上三个字段
 ```
 
-日志输出示例：
+场景二：没有追踪系统，起一条新链路
+
+```cpp
+TraceContext tc;
+if (!parse_traceparent(req.header("traceparent"), tc))
+  tc = generate_trace();        // 无上游 → 自己起一条
+ContextScope ctx{ KV("trace_id", tc.trace_id), KV("span_id", tc.span_id) };
+```
+
+场景三：要往下游服务传
+
+```cpp
+http_client.set_header("traceparent", make_traceparent(tc));
+```
+
+API：
+
+```cpp
+// include/logger/trace.h
+// traceparent 的四段都可携带；version / trace_flags 有默认值，构造后不设也能用
+struct TraceContext {
+  std::string version = "00";      // 2 hex，当前规范仅有 "00"
+  std::string trace_id;            // 32 hex，必须由调用方填
+  std::string span_id;             // 16 hex，必须由调用方填
+  std::string trace_flags = "01";  // 2 hex，bit0 为 sampled
+  [[nodiscard]] bool sampled() const;
+};
+
+TraceContext generate_trace();                                    // 起新链路
+bool parse_traceparent(std::string_view header, TraceContext& out);  // 格式非法返回 false
+std::string make_traceparent(const TraceContext& ctx);            // 供下游传播
+```
+
+> `version` 参与 traceparent 编解码但不作为日志字段输出——日志只带 `trace_id` / `span_id` / `trace_flags` 三个字段。
+
+输出示例：
 
 ```json
 {
   "level": "error",
   "msg": "payment failed",
-  "trace_id": "abc123",
-  "span_id": "def456",
+  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "span_id": "00f067aa0ba902b7",
+  "trace_flags": "01",
   "error": "timeout"
 }
 ```
+
+**明确不做**
+
+- 不实现 span 层级、不采集 span、不上报——那是追踪系统的事
+- 不自动注入 HTTP 头，只提供 `make_traceparent` 给调用方用
+- 不按 `trace_flags` 丢日志：采样就该是采样本的职责（M6），两者不耦合
+- 不反查 `trace_id`，logger 只做字段透传
+
+**解析与生成规则**
+
+- `parse_traceparent` 只接受 4 段及以上；version 为 `00` 时**不得**有追加字段，更高版本的追加字段按规范忽略。
+- `make_traceparent` **四个字段一视同仁**：任一长度/字符/全 0 不合法即返回空串，**不做任何默认值替换**。默认值只放在 `TraceContext` 的成员初始值里，不放在生成函数里——否则会发出「看似合法但语义被改过」的头（如把非法的 `trace_flags` 悄悄写成 `00`）。
+- `sampled()` 取 `trace_flags` 的 **bit0**，不是「nibble 非 0」。flags 是 8 位标志位，`"02"`/`"0c"` 这类值 bit0 为 0，属未采样。
+
+**异常情况的行为**
+
+- `trace_id` / `span_id` 长度或字符不合法 → 按「无 trace」处理，字段不输出，不报错、不影响其它字段
+- `make_traceparent` 生成不合规内容 → 同上，视为无 trace
+- 跨线程 / 线程池不延续：`ContextScope` 是 thread_local（与 M5.1 一致），需延续时显式 `with(KV("trace_id", ...))` 传值
+
+**OTEL 集成（M8）**
+
+届时只增加一个 `from_otel_span(span) -> TraceContext` 适配器，核心代码不包含任何 OTEL 头文件。
 
 ### 6. 统一业务字段
 
