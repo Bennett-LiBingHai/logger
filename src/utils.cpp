@@ -108,3 +108,78 @@ std::string json_escape(const std::string& raw) {
   }
   return out;
 }
+
+// 文本转义：反斜杠与控制字符转成字面转义序列，保证一条日志只占一行。
+// 反斜杠一起转义，否则「数据里的反斜杠+n」与「转义后的换行」无法区分。
+void append_text_escaped(std::string_view raw, std::string& out) {
+  static constexpr char kHex[] = "0123456789abcdef";
+
+  bool need = false;
+  for (const char ch : raw) {
+    const auto c = static_cast<uint8_t>(ch);
+    if (c == '\\' || c < 0x20 || c == 0x7F) {
+      need = true;
+      break;
+    }
+  }
+  if (!need) {  // 绝大多数日志无需转义，走快路径
+    out.append(raw);
+    return;
+  }
+
+  for (const char ch : raw) {
+    const auto c = static_cast<uint8_t>(ch);
+    switch (c) {
+    case '\\':
+      out += "\\\\";
+      break;
+    case '\b':
+      out += "\\b";
+      break;
+    case '\f':
+      out += "\\f";
+      break;
+    case '\t':
+      out += "\\t";
+      break;
+    case '\r':
+      out += "\\r";
+      break;
+    case '\n':
+      out += "\\n";
+      break;
+    default:
+      if (c < 0x20 || c == 0x7F) {  // 其余控制字符：\xNN
+        out += "\\x";
+        out += kHex[c >> 4];
+        out += kHex[c & 0x0F];
+      } else {
+        out += ch;
+      }
+      break;
+    }
+  }
+}
+
+std::string text_escape(std::string_view raw) {
+  std::string out;
+  out.reserve(raw.size());
+  append_text_escaped(raw, out);
+  return out;
+}
+
+// UTF-8 安全截断：退到完整码点边界，避免切出非法 UTF-8；被截断时以 "..." 结尾
+void truncate_utf8(std::string& s, std::size_t limit) {
+  if (s.size() <= limit)
+    return;
+
+  // 预留 "..." 的位置（limit 不足 3 字节时不加标记）
+  std::size_t cut = (limit >= 3) ? limit - 3 : limit;
+  // UTF-8 续字节形如 10xxxxxx，回退到码点起始处
+  while (cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0) == 0x80)
+    --cut;
+
+  s.resize(cut);
+  if (limit >= 3)
+    s += "...";
+}

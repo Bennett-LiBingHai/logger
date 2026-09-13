@@ -124,7 +124,13 @@ serviceLogger.info("server started");  // 自动带 service / version
 | 字段 | 默认值 | 说明 |
 |---|---|---|
 | `log_level` | `LogLevel::TRACE` | 全局最低输出级别 |
-| `max_log_item_size` | `1024` | 单条日志最大长度（超长截断） |
+| `max_message_length` | `0` | 消息正文字节上限（`0` = 不限，超长截断） |
+| `max_field_length` | `0` | 单个字段值字节上限（`0` = 不限，超长截断） |
+| `max_record_size` | `1024` | 整条记录字节预算（`0` = 不限）。框架与消息的 `...` 标记必定输出，小于「框架 + ...」时以最少形态输出 |
+| `max_stacktrace_length` | `512` | 单条堆栈字节上限（`0` = 不限，超出按帧丢弃并附 `(+N frames)`） |
+| `dedup_window_ms` | `0` | 聚合去重窗口（毫秒，`0` = 关闭）。同线程内相同 `(level, file, line)` 只输出首条，序列结束补一条重复次数 |
+| `enable_sensitive_field_mask` | `false` | 是否启用敏感字段脱敏 |
+| `sensitive_field_masker` | `default_sensitive_field_masker` | 脱敏函数 `(key, value) -> value`，入参为未编码的原始值 |
 | `time_format` | `TimeFormat::ISO8601` | 时间格式 |
 | `use_utc_time` | `false` | 是否使用 UTC（否则本地时间） |
 | `format` | `LogFormat::TEXT` | 输出格式：`TEXT` / `JSON` |
@@ -139,6 +145,15 @@ cfg.log_level = LogLevel::INFO;
 cfg.format = LogFormat::JSON;
 Logger::get_instance().set_config(cfg);
 ```
+
+运行期只改级别时用 `set_level()`，不必构造整份配置（线程安全，立即对热路径生效）：
+
+```cpp
+Logger::get_instance().set_level(LogLevel::DEBUG);   // 接到 HTTP / SIGHUP 里即可
+```
+
+> 改级只对**新记录**生效：已构造 / 已入队的记录持有各自的配置快照。
+> 持久化与鉴权是应用的职责，库只负责线程安全地改。
 
 ## 输出格式
 
@@ -200,6 +215,28 @@ Logger::get_instance().flush_all();              // 等队列清空并写完
 | `DropDebug` | 优先丢弃低级别日志，保留新日志 |
 
 优雅关闭：`close()`（或析构）会停止接收新日志、等待队列消费完并刷新 Sink，返回统计信息。
+
+## 自身指标
+
+`Logger::get_instance().stats()` 返回一份 `LogStats` 快照。计数用原子累加，读取不加锁
+（仅队列长度需短暂持锁）。
+
+| 字段 | 含义 |
+|---|---|
+| `written` | 成功写入 sink 的记录数（至少一个 sink 成功） |
+| `failed_writes` | sink 写失败次数 |
+| `dropped` | 丢弃次数（队列满、写失败按策略丢弃、编码抛异常） |
+| `by_level[7]` | 按级别统计写入条数，下标同 `LogLevel` |
+| `queue_length` | 快照时刻队列长度（同步模式恒为 0） |
+| `queue_peak` | 队列峰值 |
+| `max_write_latency_us` | 异步写出最长延迟（微秒），从打点到写出 |
+| `masked_fields` | 脱敏字段数 |
+| `dedup_suppressed` | 被聚合去重抑制的条数 |
+
+```cpp
+const LogStats s = Logger::get_instance().stats();
+LOG_INFO("written={} dropped={} queue_peak={}", s.written, s.dropped, s.queue_peak);
+```
 
 ## 测试
 

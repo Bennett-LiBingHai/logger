@@ -17,6 +17,7 @@
 
 #include "logger/config.h"
 #include "logger/context.h"
+#include "logger/dedup.h"
 #include "logger/error.h"
 #include "logger/format.h"
 #include "logger/formatter/json_formatter.h"
@@ -101,6 +102,9 @@ class Logger {
   // 更新配置
   void set_config(const LogConfig& config);
 
+  // 运行期调整日志级别（线程安全）；其余配置不变
+  void set_level(LogLevel level);
+
   // 获取配置
   LogConfig get_config();
 
@@ -135,13 +139,25 @@ class Logger {
     bool less;
   };
 
+  // 自身指标：热路径用 relaxed 原子，快照读取不加锁
+  struct Counters {
+    std::atomic<unsigned long long> written{0};
+    std::atomic<unsigned long long> failed_writes{0};
+    std::atomic<unsigned long long> dropped{0};
+    std::atomic<unsigned long long> dedup_suppressed{0};
+    std::atomic<unsigned long long> masked_fields{0};
+    std::atomic<unsigned long long> by_level[7] = {};
+    std::atomic<unsigned long long> queue_peak{0};
+    std::atomic<unsigned long long> max_write_latency_us{0};
+  };
+
   // logger共享资源
   struct Impl {
-    std::mutex mtx;  // 保护 sinks/config/stats/async_running
+    std::mutex mtx;  // 保护 sinks/config/async_running
     std::vector<std::shared_ptr<LogSink>> sinks;
     LogConfig config;
     std::atomic<LogLevel> log_level{LogLevel::TRACE};  // 级别热缓存，供热路径 lock-free 早退
-    LogStats stats;
+    Counters counters;
     std::atomic<bool> async_running{false};  // 异步线程是否已启动（启动后不变）
 
     std::mutex queue_mtx;  // 保护 queue/stop/in_flight
@@ -172,6 +188,11 @@ class Logger {
   void log_impl(LogLevel logLevel, const char* file, int line, const char* func, const char* fmt,
                 Args&&... args) noexcept;
 
+  // log_impl 的实际实现：允许抛异常，由 log_impl 统一兜底
+  template <typename... Args>
+  void log_impl_inner(LogLevel logLevel, const char* file, int line, const char* func,
+                      const char* fmt, Args&&... args);
+
   // 异常字段展开后复用 log_impl；无嵌套时 error_chain 用空 key 占位，由 append_field 跳过
   template <typename... Args>
   void log_exception_impl(LogLevel level, const char* file, int line, const char* func,
@@ -179,6 +200,34 @@ class Logger {
 
   // 根据配置选择格式化器
   FormatResult format_record(const Record& msg, const LogConfig& config, bool less);
+
+  // 按 max_record_size 削减后格式化；不对最终串做字节切
+  FormatResult format_record_budgeted(const Record& msg, const LogConfig& config, bool less);
+
+  // 敏感字段脱敏：只对值真被改变的字段重建 FieldValue，未命中者保持原类型
+  void mask_sensitive_fields(std::vector<Field>& fields, const LogConfig& config);
+
+  // 按 max_field_length 截断超长字段值（UTF-8 安全）；按目标格式渲染后度量
+  void limit_field_lengths(std::vector<Field>& fields, const LogConfig& config);
+
+  // 补发聚合摘要：取走载荷，填入重复次数后输出（可能抛，由调用方兜底）
+  void emit_dedup_summary(std::uint64_t count, const LogConfig& config, bool is_async,
+                          const std::vector<std::shared_ptr<LogSink>>& sinks);
+  // 当前线程待补发的聚合载荷：序列首次重复时组装，序列结束时输出
+  static Record& pending_dedup_payload();
+  // 载荷是否已成功组装（组装中途失败时不发摘要，避免发出空记录）
+  static bool& pending_dedup_ready();
+  // 结束当前线程的去重序列并补发摘要（flush_all 用）
+  void flush_dedup() noexcept;
+  // 更新队列峰值（relaxed 原子，无锁）
+  void note_queue_peak(std::size_t n) noexcept {
+    if (n > impl_->counters.queue_peak.load(std::memory_order_relaxed))
+      impl_->counters.queue_peak.store(n, std::memory_order_relaxed);
+  }
+  // 路由一条已物化的 Record：异步入队 / 同步直写。
+  // 不标 noexcept —— 同步分支里的格式化会抛，需向上交给 log_impl 兜底
+  void route_record(Record&& msg, const LogConfig& config, bool is_async,
+                    const std::vector<std::shared_ptr<LogSink>>& sinks);
 
   std::shared_ptr<Impl> impl_ = std::make_shared<Impl>();
   std::vector<Field> fields_;
@@ -260,14 +309,27 @@ inline Logger Logger::with_trace(const TraceContext& ctx) {
               KV("trace_flags", ctx.trace_flags));
 }
 
-// log前分流
+// log前分流：noexcept 边界，全库唯一一处异常兜底
 template <typename... Args>
 void Logger::log_impl(LogLevel logLevel, const char* file, int line, const char* func,
                       const char* fmt, Args&&... args) noexcept {
-  // 级别过滤（lock-free 早退）+ 一次持锁快照字段/config/sinks
+  // 级别过滤（lock-free 早退）：关闭的级别不付任何后续开销
   if (logLevel < impl_->log_level.load(std::memory_order_relaxed))
     return;
 
+  try {
+    log_impl_inner(logLevel, file, line, func, fmt, std::forward<Args>(args)...);
+  } catch (...) {
+    // 任何异常（内存不足、用户 operator<< / masker 抛出、库自身的意外）都整条丢弃：
+    // 日志故障不能影响主业务，也不能让进程倒下
+    impl_->counters.dropped.fetch_add(1, std::memory_order_relaxed);
+  }
+}
+
+// log_impl 的实际实现：允许抛异常，由 log_impl 统一兜底
+template <typename... Args>
+void Logger::log_impl_inner(LogLevel logLevel, const char* file, int line, const char* func,
+                            const char* fmt, Args&&... args) {
   std::vector<Field> fields;
   LogConfig config;
   std::vector<std::shared_ptr<LogSink>> sinks;
@@ -284,6 +346,26 @@ void Logger::log_impl(LogLevel logLevel, const char* file, int line, const char*
                  (config.stacktrace == StackTraceMode::FATAL && logLevel >= LogLevel::FATAL);
   }
 
+  // 聚合去重：同 (level, file, line) 在窗口内只输出首条，序列结束补一条重复次数。
+  // 判定必须早于合并上下文 / 采集堆栈 / 构造 Record —— 重复日志这些开销全都要省掉。
+  bool capture_only = false;
+  if (config.dedup_window_ms != 0) {
+    std::uint64_t prev_count = 0;
+    bool need_payload = false;
+    const auto decision = dedup_filter().on_log(logLevel, file, line, config.dedup_window_ms,
+                                                &prev_count, &need_payload);
+    if (prev_count > 1)
+      emit_dedup_summary(prev_count, config, is_async, sinks);
+
+    if (decision == DedupFilter::Decision::Suppress) {
+      impl_->counters.dedup_suppressed.fetch_add(1, std::memory_order_relaxed);
+      if (!need_payload)
+        return;  // 窗口内重复：不构造 Record、不入队、不落盘
+      // 首次重复：照常组装完整 Record（含上下文 / 堆栈 / 字段），但只存不发
+      capture_only = true;
+    }
+  }
+
   // 和并作用域数据
   ContextScope::merge_into(fields);
 
@@ -295,7 +377,17 @@ void Logger::log_impl(LogLevel logLevel, const char* file, int line, const char*
   // 物化 Record（无锁，本地工作）
   auto positional = split_fields(fields, std::forward<Args>(args)...);
   dedup_fields(fields);  // 同 key 后写覆盖
+
+  // 脱敏必须早于构造 Record：异步模式下队列里不该存明文
+  mask_sensitive_fields(fields, config);
+
+  // 位置参数经用户 operator<< 编码，可能抛；统一由 log_impl 兜底
   std::string content = std::apply([&](auto&&... pa) { return format(fmt, pa...); }, positional);
+
+  // 部件上限：先限制各部件，整条预算由 format_record_budgeted 兜底
+  limit_field_lengths(fields, config);
+  if (config.max_message_length != 0)
+    truncate_utf8(content, config.max_message_length);
 
   Record msg{std::chrono::system_clock::now(),
              logLevel,
@@ -306,49 +398,68 @@ void Logger::log_impl(LogLevel logLevel, const char* file, int line, const char*
              func,
              std::move(fields)};
 
-  const bool less = (file == nullptr);
-
-  // 3. 路由：异步入队 / 同步直写
-  if (is_async) {
-    bool full;
-    {
-      std::unique_lock<std::mutex> qlock(impl_->queue_mtx);
-      full = (impl_->queue.size()) >= (config.buffer_size);
-    }
-    if (full) {
-      switch (config.asy_que_ful_strategy) {
-      case AsyQueFulStrategy::Block: {
-        std::unique_lock<std::mutex> qlock(impl_->queue_mtx);
-        impl_->ful_cv.wait(qlock,
-                           [this, &config]() { return impl_->queue.size() < config.buffer_size; });
-        impl_->queue.push_back(LogData{std::move(msg), less});
-        break;
-      }
-      case AsyQueFulStrategy::DropNewest: {
-        return;
-      }
-      case AsyQueFulStrategy::DropOldest: {
-        std::unique_lock<std::mutex> qlock(impl_->queue_mtx);
-        impl_->queue.pop_front();
-        impl_->queue.push_back(LogData{std::move(msg), less});
-        break;
-      }
-      case AsyQueFulStrategy::DropDebug: {
-        drop_debug(LogData{std::move(msg), less});
-        break;
-      }
-      default: {
-        return;
-      }
-      }
-    } else {
-      std::unique_lock<std::mutex> qlock(impl_->queue_mtx);
-      impl_->queue.push_back(LogData{std::move(msg), less});
-    }
-    impl_->cv.notify_one();
-  } else {
-    log_impl_sync(msg, config, sinks, less);
+  // 首次重复：把组装好的 Record 留作摘要载荷，不立即输出
+  if (capture_only) {
+    pending_dedup_payload() = std::move(msg);
+    pending_dedup_ready() = true;
+    return;
   }
+
+  // 路由：异步入队 / 同步直写
+  route_record(std::move(msg), config, is_async, sinks);
+}
+
+// 路由一条已物化的 Record：异步入队 / 同步直写
+inline void Logger::route_record(Record&& msg, const LogConfig& config, bool is_async,
+                                 const std::vector<std::shared_ptr<LogSink>>& sinks) {
+  const bool less = (msg.file == nullptr);
+
+  if (!is_async) {
+    log_impl_sync(msg, config, sinks, less);
+    return;
+  }
+
+  bool full;
+  {
+    std::unique_lock<std::mutex> qlock(impl_->queue_mtx);
+    const std::size_t n = impl_->queue.size();
+    full = n >= config.buffer_size;
+    // 峰值就地更新：队列满时后续分支大小不变（n），未满时压入后为 n+1
+    note_queue_peak(full ? n : n + 1);
+  }
+  if (full) {
+    switch (config.asy_que_ful_strategy) {
+    case AsyQueFulStrategy::Block: {
+      std::unique_lock<std::mutex> qlock(impl_->queue_mtx);
+      impl_->ful_cv.wait(qlock,
+                         [this, &config]() { return impl_->queue.size() < config.buffer_size; });
+      impl_->queue.push_back(LogData{std::move(msg), less});
+      break;
+    }
+    case AsyQueFulStrategy::DropNewest: {
+      impl_->counters.dropped.fetch_add(1, std::memory_order_relaxed);
+      return;
+    }
+    case AsyQueFulStrategy::DropOldest: {
+      std::unique_lock<std::mutex> qlock(impl_->queue_mtx);
+      impl_->queue.pop_front();
+      impl_->queue.push_back(LogData{std::move(msg), less});
+      impl_->counters.dropped.fetch_add(1, std::memory_order_relaxed);
+      break;
+    }
+    case AsyQueFulStrategy::DropDebug: {
+      drop_debug(LogData{std::move(msg), less});
+      break;
+    }
+    default: {
+      return;
+    }
+    }
+  } else {
+    std::unique_lock<std::mutex> qlock(impl_->queue_mtx);
+    impl_->queue.push_back(LogData{std::move(msg), less});
+  }
+  impl_->cv.notify_one();
 }
 
 // 异常字段展开后复用 log_impl：error / error_type 恒有，error_chain 仅在嵌套时产生

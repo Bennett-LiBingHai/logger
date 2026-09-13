@@ -30,6 +30,13 @@ void JsonFormatter::append_key(std::string& out, const std::string& key) {
   append_key(out, "msg");
   encode(msg.content, out, true);
 
+  // 聚合摘要：折叠次数作为独立成员，便于下游直接聚合
+  if (msg.repeat_count > 1) {
+    out += ", ";
+    append_key(out, "repeated");
+    out += std::to_string(msg.repeat_count);
+  }
+
   // 结构化字段：紧跟 msg，按调用顺序，保类型
   for (const auto& f : msg.fields) {
     out += ", ";

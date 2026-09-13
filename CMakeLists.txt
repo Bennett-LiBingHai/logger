@@ -66,6 +66,11 @@ if(BUILD_TESTS)
         ${CMAKE_SOURCE_DIR}/test/unit/test_error.cpp
         ${CMAKE_SOURCE_DIR}/test/unit/test_stacktrace.cpp
         ${CMAKE_SOURCE_DIR}/test/unit/test_trace.cpp
+        ${CMAKE_SOURCE_DIR}/test/unit/test_mask.cpp
+        ${CMAKE_SOURCE_DIR}/test/unit/test_injection.cpp
+        ${CMAKE_SOURCE_DIR}/test/unit/test_limits.cpp
+        ${CMAKE_SOURCE_DIR}/test/unit/test_stats.cpp
+        ${CMAKE_SOURCE_DIR}/test/unit/test_dedup.cpp
         ${CMAKE_SOURCE_DIR}/test/integration/test_concurrency.cpp
     )
 

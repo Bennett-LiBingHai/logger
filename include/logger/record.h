@@ -1,5 +1,6 @@
 #pragma once
 #include <chrono>
+#include <cstdint>
 #include <string>
 #include <thread>
 #include <vector>
@@ -17,4 +18,5 @@ struct Record {
   int line;                                    // 行数
   const char* func;                            // 函数名
   std::vector<Field> fields;                   // 结构化字段（有序、保类型）
+  std::uint64_t repeat_count = 0;  // 消息重复出现的次数（聚合去重填充，> 1 才输出）
 };

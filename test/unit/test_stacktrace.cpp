@@ -150,14 +150,15 @@ TEST_F(StackTraceLogTest, ExplicitKvWorksRegardlessOfMode) {
   EXPECT_NE(only_message().find("stacktrace="), std::string::npos);
 }
 
-TEST_F(StackTraceLogTest, FatalLineStaysWithinMaxLogItemSize) {
-  // 堆栈有独立预算，不应把整条日志顶到被 max_log_item_size 硬切
+TEST_F(StackTraceLogTest, FatalLineStaysWithinRecordBudget) {
+  // 堆栈有独立预算，不该把整条记录顶到被 max_record_size 削减
   LogConfig cfg;
-  cfg.max_log_item_size = 1024;
+  cfg.max_record_size = 1024;
   Logger::get_instance().set_config(cfg);
 
   LOG_FATAL("boom");
   const std::string line = only_message();
-  EXPECT_LT(line.size(), cfg.max_log_item_size);
-  EXPECT_EQ(line.back(), '\n');  // 行结构完好（硬切会吃掉结尾换行）
+  EXPECT_LT(line.size(), cfg.max_record_size);
+  EXPECT_EQ(line.back(), '\n');                   // 行结构完好
+  EXPECT_NE(line.find("(+"), std::string::npos);  // 堆栈因自身预算截断，而非整条被削
 }

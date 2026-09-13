@@ -1,7 +1,9 @@
 #include <atomic>
 #include <gtest/gtest.h>
 #include <memory>
+#include <ostream>
 #include <set>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -15,6 +17,12 @@
 
 namespace {
 
+// operator<< 抛异常的类型：用于让后台写入线程在格式化时抛
+struct ThrowingStreamable {};
+std::ostream& operator<<(std::ostream& os, const ThrowingStreamable&) {
+  throw std::runtime_error("operator<< boom");
+}
+
 // 配置异步模式并返回新捕获 Sink（每个用例用独立 sink，断言只针对该 sink）
 std::shared_ptr<CapturingSink> set_async(LogConfig cfg) {
   cfg.async = true;
@@ -25,6 +33,55 @@ std::shared_ptr<CapturingSink> set_async(LogConfig cfg) {
 }
 
 }  // namespace
+
+// 后台写入抛异常：该条丢弃、后台线程存活、flush_all 不挂住
+TEST(AsyncTest, ThrowingFieldInWriterIsDroppedAndLoopSurvives) {
+  auto sink = std::make_shared<CapturingSink>();
+  Logger::get_instance().add_sink(sink);
+
+  LogConfig cfg;
+  cfg.async = true;
+  Logger::get_instance().set_config(cfg);
+
+  const auto before = Logger::get_instance().stats().dropped;
+  Logger::get_instance().info("bad", KV("k", ThrowingStreamable{}));
+  Logger::get_instance().info("good");  // 后台线程必须还活着
+  Logger::get_instance().flush_all();   // 且不得永久等待
+
+  const LogStats after = Logger::get_instance().stats();
+  EXPECT_EQ(after.dropped - before, 1u);
+  EXPECT_EQ(after.queue_length, 0u);
+  ASSERT_EQ(sink->size(), 1u);  // 只有 good 写出来了
+  EXPECT_NE(sink->messages().front().find("good"), std::string::npos);
+}
+
+// 自身指标：用 GateSink 卡住后台线程，让队列堆积，检查长度与峰值
+TEST(AsyncTest, TracksQueueLengthAndPeak) {
+  LogConfig cfg;
+  cfg.async = true;
+  cfg.buffer_size = 1000;  // 远大于本次压入数量，避免触发队列满策略
+  Logger::get_instance().set_config(cfg);
+
+  auto gate = std::make_shared<GateSink>(1);  // 第一次 log 即阻塞后台线程
+  Logger::get_instance().add_sink(gate);
+
+  for (int i = 0; i < 50; ++i)
+    Logger::get_instance().info("msg {}", i);
+
+  gate->wait_received(1);  // 后台线程已取走第一条并卡住
+
+  const LogStats s = Logger::get_instance().stats();
+  EXPECT_GT(s.queue_length, 0u);  // 剩下的都还在队列里
+  EXPECT_GE(s.queue_peak, s.queue_length);
+  EXPECT_GE(s.queue_peak, 40u);  // 50 条减去被取走的那条左右
+  // 注意：此刻后台线程正卡在 sink 里，还没有任何一条完成写出，written 应为 0
+
+  gate->open();
+  Logger::get_instance().flush_all();
+  const LogStats after = Logger::get_instance().stats();
+  EXPECT_EQ(after.queue_length, 0u);  // 已排空
+  EXPECT_GE(after.written, 50u);  // 至少这 50 条（同二进制内其它用例可能另有计数）
+}
 
 // 基本：异步模式下所有消息不丢（flush 后队列清空并写完）
 TEST(AsyncTest, DeliversAllMessages) {

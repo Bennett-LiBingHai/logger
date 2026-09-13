@@ -90,24 +90,48 @@ TEST_F(LoggerTest, FlushAllFlushesEverySink) {
 }
 
 TEST_F(LoggerTest, TruncatesOversizedMessage) {
+  // 超预算时按单元削减：截断消息，但行结构必须完好
   LogConfig cfg;
-  cfg.max_log_item_size = 32;
+  cfg.max_record_size = 200;
   Logger::get_instance().set_config(cfg);
-  std::string long_msg(200, 'x');
+  const std::string long_msg(500, 'x');
   Logger::get_instance().log(LogLevel::INFO, "f.cpp", 1, "f", long_msg.c_str());
+
   ASSERT_EQ(sink_->size(), 1u);
-  EXPECT_EQ(sink_->messages().front().size(), cfg.max_log_item_size);
+  const std::string line = sink_->messages().front();
+  EXPECT_LE(line.size(), cfg.max_record_size);
+  EXPECT_EQ(line.back(), '\n');                    // 行尾换行没被切掉
+  EXPECT_EQ(line.find('\n'), line.size() - 1);     // 仍是完整一行
+  EXPECT_NE(line.find("..."), std::string::npos);  // 截断留下标记
+}
+
+TEST_F(LoggerTest, UsesMinimalFormWhenBudgetBelowFraming) {
+  // 预算小于「框架 + ...」时不可满足：框架必输出，消息退化成省略标记
+  LogConfig cfg;
+  cfg.max_record_size = 16;
+  Logger::get_instance().set_config(cfg);
+  Logger::get_instance().log(LogLevel::INFO, "f.cpp", 1, "f", "a long message body");
+
+  ASSERT_EQ(sink_->size(), 1u);
+  const std::string line = sink_->messages().front();
+  EXPECT_NE(line.find("[INFO]"), std::string::npos);  // 框架仍在
+  EXPECT_NE(line.find("..."), std::string::npos);
+  EXPECT_EQ(line.back(), '\n');
 }
 
 TEST_F(LoggerTest, SetAndGetConfigRoundTrip) {
   LogConfig cfg;
   cfg.log_level = LogLevel::ERROR;
-  cfg.max_log_item_size = 512;
+  cfg.max_record_size = 512;
+  cfg.max_message_length = 128;
+  cfg.max_field_length = 64;
   cfg.use_utc_time = true;
   Logger::get_instance().set_config(cfg);
   LogConfig got = Logger::get_instance().get_config();
   EXPECT_EQ(got.log_level, LogLevel::ERROR);
-  EXPECT_EQ(got.max_log_item_size, 512u);
+  EXPECT_EQ(got.max_record_size, 512u);
+  EXPECT_EQ(got.max_message_length, 128u);
+  EXPECT_EQ(got.max_field_length, 64u);
   EXPECT_TRUE(got.use_utc_time);
 }
 
@@ -222,6 +246,38 @@ TEST_F(LoggerTest, ThrowingSinkDoesNotCrash) {
   Logger::get_instance().info("msg");  // 若没 catch 会 terminate
   auto after = Logger::get_instance().stats();
   EXPECT_EQ(after.failed_writes - before.failed_writes, 1u);
+}
+
+TEST_F(LoggerTest, SetLevelTakesEffectImmediately) {
+  Logger::get_instance().debug("before");
+  ASSERT_EQ(sink_->size(), 1u);
+
+  Logger::get_instance().set_level(LogLevel::ERROR);  // 运行期抬高
+
+  Logger::get_instance().debug("filtered");
+  Logger::get_instance().info("filtered");
+  Logger::get_instance().error("kept");
+  ASSERT_EQ(sink_->size(), 2u);
+  EXPECT_NE(sink_->messages().back().find("kept"), std::string::npos);
+}
+
+TEST_F(LoggerTest, SetLevelUpdatesConfigToo) {
+  Logger::get_instance().set_level(LogLevel::WARN);
+  EXPECT_EQ(Logger::get_instance().get_config().log_level, LogLevel::WARN);
+}
+
+TEST_F(LoggerTest, SetLevelDoesNotDisturbOtherConfig) {
+  LogConfig cfg;
+  cfg.max_record_size = 512;
+  cfg.format = LogFormat::JSON;
+  Logger::get_instance().set_config(cfg);
+
+  Logger::get_instance().set_level(LogLevel::WARN);
+
+  const LogConfig got = Logger::get_instance().get_config();
+  EXPECT_EQ(got.log_level, LogLevel::WARN);
+  EXPECT_EQ(got.max_record_size, 512u);  // 其余配置不变
+  EXPECT_EQ(got.format, LogFormat::JSON);
 }
 
 TEST(FilenameOfTest, StripsDirectoryPrefix) {
