@@ -1,20 +1,28 @@
 #pragma once
-#include <cctype>
+#include <cstdint>
 #include <string>
 #include <string_view>
 
-// 日志级别
-enum class LogLevel {
-  TRACE = 0,  // 极细粒度的执行过程
-  DEBUG,      // 开发调试信息
-  INFO,       // 正常业务流程
-  WARN,       // 可恢复异常或潜在风险
-  ERROR,      // 当前操作失败
-  FATAL,      // 致命错误，记录后通常调用 `std::abort()` 终止进程
-  OFF         // 关闭所有日志输出
+/// @file level.h
+/// @brief 日志级别枚举及其文本转换。
+
+/// @brief 日志级别，取值由低到高递增。
+///
+/// 级别之间是**包含关系**：设置级别为 INFO 时，INFO 及更高的 WARN / ERROR / FATAL
+/// 都会输出，比它低的则被丢弃。Logger 在入口处做这个比较，关闭的级别不付任何后续开销。
+enum class LogLevel : std::uint8_t {
+  TRACE = 0,  ///< 极细粒度的执行过程
+  DEBUG,      ///< 开发调试信息
+  INFO,       ///< 正常业务流程
+  WARN,       ///< 可恢复异常或潜在风险
+  ERROR,      ///< 当前操作失败
+  FATAL,      ///< 致命错误，记录后通常调用 std::abort() 终止进程
+  OFF         ///< 关闭所有日志输出
 };
 
-// 获取日志级别对应字符串
+/// @brief 取级别的大写名字，用于文本格式输出。
+/// @param log_level 日志级别。
+/// @return 形如 "INFO"、"ERROR" 的常量字符串；取值非法时返回 "UNKNOWN"。
 [[nodiscard]] inline const std::string_view to_string(LogLevel log_level) {
   switch (log_level) {
   case LogLevel::TRACE:
@@ -36,7 +44,9 @@ enum class LogLevel {
   }
 }
 
-// 获取日志级别对应小写字符串（JSON 惯例）
+/// @brief 取级别的小写名字，用于 JSON 格式输出（JSON 惯例是小写）。
+/// @param log_level 日志级别。
+/// @return 形如 "info"、"error" 的字符串；取值非法时返回 "unknown"。
 [[nodiscard]] inline std::string to_lower_string(LogLevel log_level) {
   switch (log_level) {
   case LogLevel::TRACE:

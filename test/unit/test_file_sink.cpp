@@ -5,15 +5,15 @@
 #include <iterator>
 #include <string>
 
-#include "logger/formatter.h"
 #include "logger/level.h"
+#include "logger/sink.h"
 #include "logger/sink/file_sink.h"
 
 namespace fs = std::filesystem;
 
 namespace {
-FormatResult make_result(const std::string& msg) {
-  FormatResult r;
+SinkInput make_result(const std::string& msg) {
+  SinkInput r;
   r.formatted_msg = msg + "\n";
   r.level = LogLevel::INFO;
   return r;

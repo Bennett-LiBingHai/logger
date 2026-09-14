@@ -23,7 +23,7 @@ namespace {
 
 constexpr int kMaxFrames = 64;
 constexpr std::size_t kBufSize = 8192;
-constexpr std::size_t kAltStackSize = 64 * 1024;
+constexpr std::size_t kAltStackSize = std::size_t{64} * 1024;
 
 // 崩溃处理器可接管的信号
 constexpr int kSignals[] = {SIGSEGV, SIGABRT, SIGBUS, SIGFPE, SIGILL};
@@ -180,8 +180,10 @@ void warn_skipped(int sig) {
                               "[logger] crash handler: %s 已有其它 handler（sanitizer / 运行时）"
                               "或被显式忽略，不接管——崩溃现场由现有处理负责\n",
                               signal_name(sig));
-  if (n > 0)
-    ::write(STDERR_FILENO, buf, static_cast<std::size_t>(n));
+  if (n > 0) {
+    const ssize_t written = ::write(STDERR_FILENO, buf, static_cast<std::size_t>(n));
+    (void)written;
+  }
 }
 
 // 运行时地址 → addr2line 的输入；返回所属模块路径，找不到模块返回 nullptr

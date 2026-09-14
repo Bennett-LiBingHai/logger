@@ -4,8 +4,8 @@
 #include <thread>
 
 #include "logger/config.h"
-#include "logger/formatter/text_formatter.h"
-#include "logger/record.h"
+#include "logger/detail/formatter/text_formatter.h"
+#include "logger/detail/record.h"
 
 #include "test_helpers.h"
 
@@ -25,7 +25,7 @@ Record make_record(LogLevel level, const std::string& content) {
 
 // M1：文本输出格式稳定
 TEST(TextFormatterTest, FormatsAllMessageFields) {
-  const FormatResult result =
+  const SinkInput result =
       TextFormatter::format(make_record(LogLevel::INFO, "hello world"), LogConfig{});
   const std::string& line = result.formatted_msg;
   EXPECT_EQ(result.level, LogLevel::INFO);
@@ -36,8 +36,7 @@ TEST(TextFormatterTest, FormatsAllMessageFields) {
 }
 
 TEST(TextFormatterTest, EmbedsThreadId) {
-  const FormatResult result =
-      TextFormatter::format(make_record(LogLevel::DEBUG, "msg"), LogConfig{});
+  const SinkInput result = TextFormatter::format(make_record(LogLevel::DEBUG, "msg"), LogConfig{});
   const std::string& line = result.formatted_msg;
   // [LEVEL] 之后必须紧跟 [thread_id]
   std::smatch m;
@@ -47,8 +46,7 @@ TEST(TextFormatterTest, EmbedsThreadId) {
 }
 
 TEST(TextFormatterTest, UsesConfiguredLevelLabel) {
-  const FormatResult result =
-      TextFormatter::format(make_record(LogLevel::ERROR, "boom"), LogConfig{});
+  const SinkInput result = TextFormatter::format(make_record(LogLevel::ERROR, "boom"), LogConfig{});
   const std::string& line = result.formatted_msg;
   EXPECT_EQ(result.level, LogLevel::ERROR);
   EXPECT_NE(line.find("[ERROR]"), std::string::npos);

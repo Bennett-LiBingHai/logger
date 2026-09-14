@@ -1,0 +1,26 @@
+---
+# clang-tidy 配置。用 clang-tidy-18 运行（与 clang-format 同版本）：
+#   cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON   # 已在 CMakeLists 里默认打开
+#   clang-tidy-18 -p build src/*.cpp src/detail/*.cpp ...
+#
+# 检查集刻意收窄：只开"能长期保持零警告"的几类。开了就要修到零，
+# 否则告警里混着真问题和噪音，等于没有。
+#
+# 没有开的（以及为什么）：
+#   readability-*       大部分是风格偏好，风格已经由 clang-format 统一
+#   cppcoreguidelines-* 大量与"不要用裸指针/不要用 C 数组"相关，本库的 C 接口（signal handler、
+#                       dladdr）绕不开，逐条 NOLINT 反而埋掉真问题
+#   modernize-*         只留 use-override：其余建议（返值、auto、make_unique）对现有代码
+#                       没有实质收益，且会与手工选择的写法冲突
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  performance-*,
+  modernize-use-override
+
+# 只对这些路径的头文件启用检查
+HeaderFilterRegex: 'include/logger/.*'
+
+# 当 clang-tidy 自动应用代码修复(clang-tidy --fix)后使用项目中的 .clang-format 文件来格式化修复后的代码
+FormatStyle: file

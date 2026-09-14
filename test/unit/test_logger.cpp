@@ -280,6 +280,24 @@ TEST_F(LoggerTest, SetLevelDoesNotDisturbOtherConfig) {
   EXPECT_EQ(got.format, LogFormat::JSON);
 }
 
+// 子 Logger 与单例共享状态，它的析构不能把日志器一起关掉：
+// 否则 auto lg = ...with(...) 这种临时对象一离开作用域，后续日志就全部丢失
+TEST_F(LoggerTest, ChildLoggerDestructionDoesNotCloseLogger) {
+  const unsigned long long dropped_before = Logger::get_instance().stats().dropped;
+
+  {
+    auto child = Logger::get_instance().with(KV("service", "db"));
+    child.info("from child");
+  }  // 子 Logger 在此析构
+
+  Logger::get_instance().info("after child destroyed");
+
+  const auto msgs = sink_->messages();
+  ASSERT_EQ(msgs.size(), 2u);
+  EXPECT_NE(msgs[1].find("after child destroyed"), std::string::npos);
+  EXPECT_EQ(Logger::get_instance().stats().dropped, dropped_before);  // 一条都没被丢
+}
+
 TEST(FilenameOfTest, StripsDirectoryPrefix) {
   EXPECT_STREQ(filename_of("/a/b/c/file.cpp"), "file.cpp");
   EXPECT_STREQ(filename_of("file.cpp"), "file.cpp");

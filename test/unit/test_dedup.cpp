@@ -4,7 +4,7 @@
 #include <string>
 #include <thread>
 
-#include "logger/dedup.h"
+#include "logger/detail/dedup.h"
 #include "logger/logger.h"
 
 #include "test_helpers.h"

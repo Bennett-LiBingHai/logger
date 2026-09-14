@@ -1,6 +1,24 @@
-#include <ctime>
+#include "logger/detail/utils.h"
 
-#include "logger/utiils.h"
+#include <ctime>
+#include <sstream>
+
+// 线程 id 的文本形式，按 id 缓存。见头文件里的说明
+const std::string& thread_id_str(std::thread::id id) {
+  // 单槽缓存：同一个线程连续打日志时命中（同步模式必然命中）。
+  // 换成按 id 建表会有两个问题：格式化线程上的表会随"曾经出现过的业务线程数"增长，
+  // 而线程 id 一旦线程结束就可能被复用；单槽没有这两个问题，最坏只是退回重新格式化。
+  static thread_local std::thread::id cached_id{};
+  static thread_local std::string cached_str;
+
+  if (cached_str.empty() || cached_id != id) {
+    std::ostringstream oss;
+    oss << id;
+    cached_str = oss.str();
+    cached_id = id;
+  }
+  return cached_str;
+}
 
 // 线程安全、跨平台的time_t转tm函数
 bool localtime_safe(time_t t, std::tm& tm) {
@@ -64,8 +82,8 @@ std::string format_time_ms(const std::chrono::system_clock::time_point& tp,
 // json字符串转义(处理\"、\\、\b、\f、\t、\r、\n、0x00 ~ 0x1F)
 std::string json_escape(const std::string& raw) {
   std::string out;
-  // 预分配内存，减少realloc，保守放大1.2倍
-  out.reserve(static_cast<size_t>(raw.size() * 1.2));
+  // 预分配内存，减少 realloc，保守放大 1.2 倍（整数运算，不引入浮点收窄）
+  out.reserve(raw.size() + raw.size() / 5);
 
   for (char ch : raw) {
     uint8_t c = static_cast<uint8_t>(ch);

@@ -2,8 +2,8 @@
 
 #include <cstdio>
 
-#include "logger/error.h"   // demangle
-#include "logger/utiils.h"  // json_escape
+#include "logger/detail/error.h"  // demangle
+#include "logger/detail/utils.h"  // json_escape
 
 #if defined(__GLIBC__)
 #include <dlfcn.h>
@@ -31,6 +31,8 @@ std::string symbolize_frame(void* addr) {
 }  // namespace
 #endif
 
+// 三个参数都是尺寸且都有默认值，改成结构体反而让 call site 更啰嗦；按位置传是本接口的既定用法
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 StackTrace StackTrace::capture(std::size_t skip, std::size_t depth, std::size_t max_length) {
   StackTrace st;
   st.max_length_ = max_length;

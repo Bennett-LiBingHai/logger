@@ -1,6 +1,8 @@
+#include <cstdio>
 #include <gtest/gtest.h>
 #include <limits>
 #include <ostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -69,6 +71,15 @@ TEST(EncodeTest, EncodesNanInf) {
   EXPECT_EQ(encode(-inf, false), "-inf");
 }
 
+// 派生异常必须按引用编码：按值传会被切片，what() 退化成基类的 "std::exception"
+// （这正是 clang-tidy 的 performance-unnecessary-value-param 当年指出来的问题）
+TEST(EncodeTest, EncodesDerivedExceptionMessage) {
+  const std::runtime_error e("boom: disk full");
+  EXPECT_EQ(encode(e, false), "boom: disk full");
+  EXPECT_EQ(encode(static_cast<const std::exception&>(e), false), "boom: disk full");
+  EXPECT_EQ(encode(e, true), "\"boom: disk full\"");
+}
+
 TEST(FieldValueTest, PreservesTypedValueAndCopies) {
   Field f = KV("user_id", 2001);
   EXPECT_EQ(f.key, "user_id");
@@ -91,4 +102,20 @@ TEST(KVTest, StringLiteralKey) {
   std::string j;
   f.value.encode(j, true);
   EXPECT_EQ(j, "\"ORD-1001\"");
+}
+
+// 非常量数组也会走字面量那个重载，但 key 长度必须按 strlen 取：
+// 按数组长度取会把后面的 NUL 一起当成字段名
+TEST(KVTest, RuntimeCharArrayKeyUsesActualLength) {
+  char buf[32];
+  std::snprintf(buf, sizeof(buf), "%s", "order_id");
+  EXPECT_EQ(KV(buf, 1).key, "order_id");
+}
+
+// 运行期为空的数组：static_assert 只看数组长度，拦不住它，
+// 这里必须退化成空串，才能被 append_field 在入库时跳过
+TEST(KVTest, RuntimeEmptyCharArrayKeyBecomesEmpty) {
+  char buf[16];
+  buf[0] = '\0';
+  EXPECT_TRUE(KV(buf, 1).key.empty());
 }

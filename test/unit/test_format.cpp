@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include <string>
 
-#include "logger/format.h"
+#include "logger/detail/format.h"
 
 // M2：{} 位置参数格式化（消息正文）
 TEST(FormatTest, InterpolatesPositionalArgs) {

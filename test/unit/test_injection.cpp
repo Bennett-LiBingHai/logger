@@ -3,8 +3,8 @@
 #include <stdexcept>
 #include <string>
 
+#include "logger/detail/utils.h"
 #include "logger/logger.h"
-#include "logger/utiils.h"
 
 #include "test_helpers.h"
 

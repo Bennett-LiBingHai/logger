@@ -6,7 +6,7 @@
 #include <system_error>
 #include <vector>
 
-#include "logger/utiils.h"
+#include "logger/detail/utils.h"
 
 FileSink::FileSink(const FileSinkConfig& config) : config_(config) {
   if (config_.dir.empty())
@@ -21,7 +21,7 @@ FileSink::FileSink(const FileSinkConfig& config) : config_(config) {
 }
 
 // 打印日志，返回是否写入成功
-bool FileSink::log(const FormatResult& result) {
+bool FileSink::log(const SinkInput& result) {
   check();
   if (!ofs_.is_open())
     return false;

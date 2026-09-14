@@ -5,26 +5,33 @@ project(
     LANGUAGES CXX C
 )
 
+# 生成 compile_commands.json，供 clang-tidy / clangd 使用
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # 消毒器开关：thread / address / undefined / leak（逗号分隔可组合，注意 thread 不能与 address/leak 混用）
 # 注：仅 thread 需要 sudo sysctl vm.mmap_rnd_bits=28（address/undefined/leak 不需要）
 set(LOGGER_SANITIZE "" CACHE STRING "Sanitizer(s) to enable: thread, address, undefined, leak")
 if(LOGGER_SANITIZE)
     message(STATUS "Sanitizer enabled: ${LOGGER_SANITIZE}")
+    #-fsanitize: 让编译器在生成的机器码里插入检查逻辑
+    #-g: 生成调试符号
+    #-fno-omit-frame-pointer: 不省略帧指针，让 Sanitizer 或调试器能生成更准确的调用栈
     add_compile_options(-fsanitize=${LOGGER_SANITIZE} -fno-omit-frame-pointer -g)
-    add_link_options(-fsanitize=${LOGGER_SANITIZE})
+    add_link_options(-fsanitize=${LOGGER_SANITIZE})#链接对应的 Sanitizer 运行时库
 endif()
 
+# 源文件目录结构与 include/ 一一对应；detail/ 下为内部实现
 set(SRC_FILES
     ${CMAKE_SOURCE_DIR}/src/crash_handler.cpp
-    ${CMAKE_SOURCE_DIR}/src/formatter/text_formatter.cpp
-    ${CMAKE_SOURCE_DIR}/src/formatter/json_formatter.cpp
-    ${CMAKE_SOURCE_DIR}/src/sink/console_sink.cpp
-    ${CMAKE_SOURCE_DIR}/src/sink/file_sink.cpp
     ${CMAKE_SOURCE_DIR}/src/field.cpp
     ${CMAKE_SOURCE_DIR}/src/logger.cpp
     ${CMAKE_SOURCE_DIR}/src/stacktrace.cpp
     ${CMAKE_SOURCE_DIR}/src/trace.cpp
-    ${CMAKE_SOURCE_DIR}/src/utils.cpp
+    ${CMAKE_SOURCE_DIR}/src/detail/utils.cpp
+    ${CMAKE_SOURCE_DIR}/src/detail/formatter/text_formatter.cpp
+    ${CMAKE_SOURCE_DIR}/src/detail/formatter/json_formatter.cpp
+    ${CMAKE_SOURCE_DIR}/src/sink/console_sink.cpp
+    ${CMAKE_SOURCE_DIR}/src/sink/file_sink.cpp
     )
 
 add_library(logger STATIC ${SRC_FILES})
@@ -47,6 +54,12 @@ add_executable(logger_example ${CMAKE_SOURCE_DIR}/examples/basic_usage.cpp)
 target_link_libraries(logger_example PRIVATE logger)
 target_compile_features(logger_example PRIVATE cxx_std_17)
 
+foreach(example file_logging async_logging trace_logging masking dynamic_level)
+    add_executable(example_${example} ${CMAKE_SOURCE_DIR}/examples/${example}.cpp)
+    target_link_libraries(example_${example} PRIVATE logger)
+    target_compile_features(example_${example} PRIVATE cxx_std_17)
+endforeach()
+
 
 option(BUILD_TESTS "Build tests" ON)
 if(BUILD_TESTS)
@@ -55,6 +68,7 @@ if(BUILD_TESTS)
 
     set(TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/test/unit/test_level.cpp
+        ${CMAKE_SOURCE_DIR}/test/unit/test_version.cpp
         ${CMAKE_SOURCE_DIR}/test/unit/test_config.cpp
         ${CMAKE_SOURCE_DIR}/test/unit/test_formatter.cpp
         ${CMAKE_SOURCE_DIR}/test/unit/test_field.cpp
@@ -78,6 +92,8 @@ if(BUILD_TESTS)
     target_link_libraries(test_logger PRIVATE logger GTest::gtest GTest::gtest_main)
     target_compile_features(test_logger PRIVATE cxx_std_17)
     target_include_directories(test_logger PRIVATE ${CMAKE_SOURCE_DIR}/test)
+    # 把 project(VERSION) 透传进去，让 test_version 校验 version.h 与它不漂移
+    target_compile_definitions(test_logger PRIVATE LOGGER_CMAKE_VERSION="${PROJECT_VERSION}")
     add_test(NAME test_logger COMMAND test_logger)
 
     # 手动观察 ConsoleSink 按级别路由（Error+ → stderr，其余 → stdout），独立二进制避免污染单例
@@ -100,12 +116,54 @@ if(BUILD_TESTS)
     target_compile_features(test_async_close PRIVATE cxx_std_17)
     target_include_directories(test_async_close PRIVATE ${CMAKE_SOURCE_DIR}/test)
     add_test(NAME test_async_close COMMAND test_async_close)
+
+    # 文件系统异常：权限、目录消失、写失败降级、fd 泄漏
+    add_executable(test_io_failure ${CMAKE_SOURCE_DIR}/test/integration/test_io_failure.cpp)
+    target_link_libraries(test_io_failure PRIVATE logger GTest::gtest GTest::gtest_main)
+    target_compile_features(test_io_failure PRIVATE cxx_std_17)
+    target_include_directories(test_io_failure PRIVATE ${CMAKE_SOURCE_DIR}/test)
+    add_test(NAME test_io_failure COMMAND test_io_failure)
+
+    # 生命周期：并发 close、重复 close、线程回收（独立二进制，close 是终态）
+    add_executable(test_lifecycle ${CMAKE_SOURCE_DIR}/test/integration/test_lifecycle.cpp)
+    target_link_libraries(test_lifecycle PRIVATE logger GTest::gtest GTest::gtest_main)
+    target_compile_features(test_lifecycle PRIVATE cxx_std_17)
+    target_include_directories(test_lifecycle PRIVATE ${CMAKE_SOURCE_DIR}/test)
+    add_test(NAME test_lifecycle COMMAND test_lifecycle)
+
+    # 持续高并发（固定时长，默认 2 秒；LOGGER_SOAK_SECONDS 可调大）
+    add_executable(test_soak ${CMAKE_SOURCE_DIR}/test/integration/test_soak.cpp)
+    target_link_libraries(test_soak PRIVATE logger GTest::gtest GTest::gtest_main)
+    target_compile_features(test_soak PRIVATE cxx_std_17)
+    target_include_directories(test_soak PRIVATE ${CMAKE_SOURCE_DIR}/test)
+    add_test(NAME test_soak COMMAND test_soak)
 endif()
 
-# 性能基准（零外部依赖，自研计时器；不在 CTest 中默认运行，手动执行 ./build/logger_benchmark）
+# API 文档（需要 doxygen）：cmake -B build -DBUILD_DOCS=ON && cmake --build build --target docs
+# 产物在 build/docs/html/index.html
+option(BUILD_DOCS "Build API docs (requires doxygen)" OFF)
+if(BUILD_DOCS)
+    find_package(Doxygen REQUIRED)
+    add_custom_target(
+        docs
+        COMMAND ${DOXYGEN_EXECUTABLE} ${CMAKE_SOURCE_DIR}/Doxyfile
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "生成 API 文档 → build/docs/html/index.html"
+        VERBATIM)
+endif()
+
+# 性能基准：Google Benchmark（可选依赖，未安装则跳过）。
+# 需要：sudo apt install libbenchmark-dev
+# 用法：./build-release/logger_benchmark [--benchmark_filter=...] [--benchmark_repetitions=N]
 option(BUILD_BENCHMARKS "Build benchmarks" ON)
 if(BUILD_BENCHMARKS)
-    add_executable(logger_benchmark ${CMAKE_SOURCE_DIR}/benchmark/logger_benchmark.cpp)
-    target_link_libraries(logger_benchmark PRIVATE logger)
-    target_compile_features(logger_benchmark PRIVATE cxx_std_17)
+    find_package(benchmark QUIET)
+    if(benchmark_FOUND)
+        add_executable(logger_benchmark ${CMAKE_SOURCE_DIR}/benchmark/logger_benchmark.cpp)
+        target_link_libraries(logger_benchmark PRIVATE logger benchmark::benchmark
+                                                       benchmark::benchmark_main)
+        target_compile_features(logger_benchmark PRIVATE cxx_std_17)
+    else()
+        message(STATUS "未找到 Google Benchmark，跳过性能基准（apt install libbenchmark-dev）")
+    endif()
 endif()

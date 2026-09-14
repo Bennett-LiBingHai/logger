@@ -1,6 +1,9 @@
+#include <fstream>
 #include <gtest/gtest.h>
+#include <iterator>
 #include <memory>
 #include <signal.h>
+#include <string>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -50,6 +53,41 @@ TEST(ConsoleOutputTest, ManualObserveStderrRouting) {
 // 父子共用 stderr，崩溃 dump 会直接打在终端上（gtest 本身仍然通过）。
 //   ./test_console              # 终端里应出现 "=== CRASH ===" 段
 //   ./test_console 2>crash.txt  # 落到文件里，再用 addr2line 解偏移
+// 崩溃现场内容校验：写文件后读回，断言关键字段都在
+TEST(CrashHandlerTest, DumpContainsPreciseCrashInfo) {
+  struct sigaction prev {};
+  ASSERT_EQ(::sigaction(SIGSEGV, nullptr, &prev), 0);
+  if (prev.sa_handler != SIG_DFL)
+    GTEST_SKIP() << "SIGSEGV 已被其它库接管（如 sanitizer），本用例跳过";
+
+  const std::string path = "/tmp/logger_crash_content_test.log";
+  ::unlink(path.c_str());
+  ASSERT_TRUE(install_crash_handler(path));
+
+  const pid_t pid = ::fork();
+  ASSERT_GE(pid, 0);
+  if (pid == 0) {
+    crash_a(nullptr);
+    _exit(0);
+  }
+
+  int status = 0;
+  ASSERT_EQ(::waitpid(pid, &status, 0), pid);
+  uninstall_crash_handler();
+
+  std::ifstream in(path);
+  const std::string dump((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  ::unlink(path.c_str());
+
+  ASSERT_TRUE(WIFSIGNALED(status));
+  EXPECT_EQ(WTERMSIG(status), SIGSEGV);
+  EXPECT_NE(dump.find("signal=SIGSEGV(11)"), std::string::npos);
+  EXPECT_NE(dump.find("fault_addr=0x0"), std::string::npos);  // nullptr 解引用
+  EXPECT_NE(dump.find("fault_pc=0x"), std::string::npos);     // 精确出错指令
+  EXPECT_NE(dump.find("stack:"), std::string::npos);
+  EXPECT_NE(dump.find("test_console+0x"), std::string::npos);  // 模块+偏移，可直接喂 addr2line
+}
+
 TEST(CrashHandlerTest, ManualObserveCrashDump) {
   // 只有 SIGSEGV 原本是默认动作时，本库才会接管它。
   // sanitizer（ASan/TSan）会先占住 SIGSEGV/SIGBUS/SIGFPE，此时崩溃由它处理，

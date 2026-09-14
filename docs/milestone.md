@@ -503,7 +503,7 @@ Logger::get_instance().add_sink(
 class LogSink {
 public:
     virtual ~LogSink() = default;
-    virtual bool log(const FormatResult& result) = 0;  // 返回是否写入成功
+    virtual bool log(const SinkInput& input) = 0;  // 返回是否写入成功
     virtual void flush() = 0;
 };
 ```
@@ -590,7 +590,8 @@ v0.3.0
 
 > **状态：已完成（v0.4.0）**。异步写入（`async` 开关 + 后台线程 + 五种队列满策略）、
 > 优雅关闭（`close()` 刷出剩余日志）均已实现。测试覆盖见 `test_async` / `test_async_close`，
-> 性能基准见 `benchmark/logger_benchmark.cpp`（零外部依赖，输出吞吐 + P50/P95/P99）。
+> 性能基准见 `benchmark/logger_benchmark.cpp`（Google Benchmark，可选依赖；
+> 输出吞吐 + P50/P95/P99，实测数据见 [performance.md](performance.md)）。
 > 本机（WSL2, Debug 构建）参考结果：关闭级别 7.5M 条/秒、同步文本 454K 条/秒、
 > 异步文本 466K 条/秒、同步 JSON 222K 条/秒、文件 Sink 488K 条/秒，关键路径 P99 < 10µs。
 
@@ -1279,6 +1280,11 @@ v0.6.0
 
 # 十、M7：测试、文档与正式发布
 
+> **状态：已完成（v1.0.0，2026-09-14）**。7 个 ctest 目标（单元 + 集成 + soak + 生命周期 +
+> IO 失败）、三套 sanitizer 配置（ASan+UBSan / TSan）、clang-tidy 静态检查（零告警）、
+> Doxygen API 文档（零警告）、`docs/` 下 13 篇文档、16 个场景的 Google Benchmark 基准。
+> 兼容性承诺自 v1.0.0 起生效，范围见 [compatibility.md](compatibility.md)。
+
 ## 目标
 
 将项目从“功能可用”提升到“可以被团队长期依赖”。
@@ -1295,26 +1301,32 @@ v0.6.0
 - 文本编码
 - 多 Sink
 - 文件轮转
-- 异步队列
-- 队列满处理
-- Close 和 Sync
+- 异步队列 / 队列满处理
+- `close()` / `flush_all()`
+- 错误记录（异常链、`LOG_EXCEPTION`）
 - 错误堆栈
 - Context
+- Trace（traceparent 编解码）
 - 脱敏
+- 注入防护（转义、单行不变式）
+- 长度限制（消息 / 字段 / 记录三层预算）
 - 聚合去重
-- 动态配置
+- 自身指标
+- 崩溃捕获
+- 异常边界（用户 `operator<<` / masker 抛异常不拖垮进程）
+- 运行期改级
 
 ### 2. 集成测试
 
-测试：
+只测本项目真实具备的对象：
 
-- Logger + 文件系统
-- Logger + OpenTelemetry
-- Logger + 配置中心
-- Logger + HTTP 中间件
-- Logger + 远程 Sink
-- 多线程并发
-- 进程退出刷盘（atexit / 析构）
+- Logger + 文件系统（轮转、目录缺失、权限）
+- 多线程并发（同步 / 异步）
+- 进程退出刷盘（析构 / `close()`）
+- 崩溃捕获 + 真实崩溃进程（子进程验证）
+
+> OpenTelemetry / 配置中心 / HTTP 中间件 / 远程 Sink 都不在本项目范围内（见 M0 决策表），
+> 没有可集成的对象，移到 M8。
 
 ### 3. 异常测试
 
@@ -1322,28 +1334,24 @@ v0.6.0
 
 - 文件权限错误
 - 磁盘满
-- ofstream 写入失败
+- `ofstream` 写入失败
 - 队列满
-- 输出连接断开
-- 重复 Close
-- 并发 Close
-- 未捕获异常
+- 重复 `close()` / 并发 `close()`
+- 用户代码抛异常（`operator<<` / 脱敏函数）
 - 崩溃信号（SIGSEGV / SIGABRT）
-- 长时间高并发
+- 持续高并发（固定时长，如 30 秒内 8 线程 × N 条，断言无丢失、无交叉、无泄漏）
 
 ### 4. 数据竞争和泄漏测试
 
-使用 Sanitizer 和工具链检查：
-
 - ThreadSanitizer（数据竞争）
-- AddressSanitizer（非法内存访问）
-- LeakSanitizer / Valgrind（内存泄漏）
+- AddressSanitizer + LeakSanitizer（非法内存访问、内存泄漏；ASan 自带 LSan）
 - UndefinedBehaviorSanitizer（未定义行为）
-- helgrind（锁竞争）
-- 线程泄漏
-- 锁死
-- 文件句柄泄漏（fd 泄漏）
-- socket 泄漏
+- 文件句柄泄漏（对比 `/proc/self/fd` 计数）
+- 线程泄漏（进程退出时无残留可 join 线程）
+
+> 不做 helgrind（与 TSan 重复且慢得多）、不做 Valgrind（与 ASan 互斥，二选一）、
+> 不检查 socket 泄漏（库不开 socket）。
+> 「锁死」不能作为独立检查项 —— 死锁靠**超时**暴露，体现在并发用例必须在限定时间内返回。
 
 ### 5. 文档完善
 
@@ -1362,8 +1370,12 @@ API 文档（头文件注释 + Doxygen）
 Trace 集成指南
 性能报告
 故障排查
-升级指南
+破坏性变更清单
 ```
+
+> 不写「升级指南」：v1.0 之前没有对外发布过版本，没有用户需要升级；
+> 改为「破坏性变更清单」，把 M2 的 printf → `{}`、M6 的字节切 → 分层预算等已发生的
+> 变更记在案，供将来写升级指南时取材。
 
 ### 6. 示例项目
 
@@ -1371,19 +1383,19 @@ Trace 集成指南
 
 - 控制台日志
 - JSON 日志
-- 文件日志
+- 文件日志（含轮转）
 - 异步日志
-- HTTP 请求日志
 - Trace 日志
 - 脱敏日志
-- 动态调整级别
+- 运行期改级
 
 ### 7. 版本和兼容性
 
 明确：
 
 - API 稳定性（公共头文件即接口）
-- ABI 兼容性（编译器 / 标准库 ABI，libstdc++ vs libc++）
+- ABI：**只承诺同编译器 + 同标准库下的稳定**；明确**不承诺跨标准库 ABI**
+  （`std::string` / `std::vector` 等布局在 libstdc++ 与 libc++ 之间就不同，静态库跨标准库链接本就不成立）
 - 宏冲突策略（统一前缀，如 `LOG_`，避免与业务宏冲突）
 - 配置兼容性
 - JSON 字段兼容性
@@ -1393,12 +1405,13 @@ Trace 集成指南
 
 ## 验收标准
 
-- 核心模块测试覆盖率达到目标
-- 并发、异常、性能测试通过
-- Sanitizer（ASan / TSan / UBSan）全绿
-- 文档能够指导新用户完成接入
+- §1 列出的能力项**逐项有对应用例**（以测试项清单为准，不设覆盖率百分比门槛 ——
+  覆盖率数字容易为了达标而写无断言的形式用例，不如按能力项逐条核对）
+- 并发、异常、性能测试通过；并发用例均在限定时间内返回（超时即视为死锁失败）
+- Sanitizer（ASan + LSan / TSan / UBSan）全绿
+- 文档可执行地验证：**不读库源码、只照 README 就能跑通 example 并看到预期输出**
 - 有完整变更日志
-- 有可重复执行的 CI 流程（CMake + CTest）
+- 有可重复执行的 CI 流程（CMake + CTest），PR 与主干都跑
 
 ## 建议版本
 
@@ -1414,39 +1427,45 @@ v1.0.0
 
 ## 1. 远程日志 Sink
 
-支持：
+**先做一个：HTTP**（最通用，云厂商日志服务通常也走它）。其余协议是**互斥替代**，不是都要做，按需再加：
 
-- HTTP
-- Kafka
-- TCP
-- UDP
-- gRPC
-- 云厂商日志服务
+| 协议 | 何时考虑 |
+|---|---|
+| HTTP | 首选 |
+| TCP / UDP | 已有 syslog 或自建收集端 |
+| Kafka / gRPC | 已在用对应中间件 |
 
-需要额外解决：
+实现一个网络 Sink 需要解决的公共问题：
 
-- 网络重试
-- 批量发送
-- 连接池
-- 本地缓存
+- 网络重试与退避
+- 批量发送与数据压缩
+- 连接复用
 - 断网恢复
-- 数据压缩
-- 背压
-- 远程服务不可用
+- 背压：远程不可用时**不能拖垮业务**（队列满策略见 M4，输出失败降级见 M3）
 
 ## 2. 日志持久化队列
 
-异步日志可以增加本地磁盘队列：
+解决的是「**进程重启 / 队列满时避免丢日志**」，**与有无远程 Sink 无关**：
 
 ```text
-内存队列 → 磁盘队列 → 远程日志服务
+内存队列 → 磁盘队列 → 落盘（本地文件或远程 Sink）
 ```
 
-用于降低进程重启或网络中断造成的日志丢失。
+要点：
+
+- 落盘格式与重放顺序
+- 重启后的重放
+- 磁盘占用上限与清理（复用 M3 保留策略的思路）
 
 ## 3. 模块级日志配置
 
-支持：
+**前置：先定义「模块」是什么**，否则本条无法实施。可选来源：
+
+- 子 Logger 命名，如 `Logger::get_instance().with_module("database")`
+- 按源文件目录推断
+- 显式参数
+
+定了来源之后，配置形如：
 
 ```text
 http=info
@@ -1454,114 +1473,122 @@ database=debug
 cache=warn
 ```
 
-并且能够对模块配置独立 Sink 和格式。
+并可对模块配置独立 Sink 与格式。
 
 ## 4. 高级采样
 
-支持：
+**接的是 M6 留下的那个例外**：M6 §九.4 明确「按请求 ID / trace ID 采样属于下游成本优化，需要时单独设计」——本节就是那份设计。
 
-- 按错误类型采样
-- 按请求路径采样
-- 按 Trace ID 采样
-- 按用户采样
-- 按租户采样
-- 只保留慢请求日志
+采样键直接复用 M2 的字段（见字段命名规范）：
 
-## 5. 审计日志
+| 采样键 | 依据字段 |
+|---|---|
+| Trace ID | `trace_id` |
+| 用户 | `user_id` |
+| 租户 | `tenant_id` |
+| 错误类型 | `error_type` |
+| 请求路径 | 需业务补 `path` 字段 |
 
-审计日志与普通运行日志建议分离：
+> 与 M6 的聚合去重是两件事：聚合是「防噪声淹没有效日志」；采样是「按请求整体保留或丢弃，降低下游成本」。
 
-```text
-普通日志：关注系统运行
-审计日志：关注用户和权限行为
+## 5. 按条件过滤
+
+**不是采样**，而是「只记录满足条件的日志」：
+
+- 只保留慢请求日志（耗时超阈值）
+- 只保留特定状态码的请求
+
+需要业务提供判定依据（耗时、状态码等字段）。
+
+## 6. 多 Logger 实例
+
+审计日志对完整性、权限、存储的要求属于**部署与存储层**，不是日志库的职责。
+
+库侧能提供的是：支持多个互不干扰的 Logger 实例，各自持有 config / Sinks / 文件：
+
+```cpp
+Logger audit_logger{audit_config};   // 独立配置与输出目标
 ```
 
-审计日志需要：
+审计日志「不允许随意删除」「更严格的权限」由运维侧保证（独立存储、权限控制、WORM）。
 
-- 更严格的完整性
-- 不允许随意删除
-- 更严格的权限
-- 单独存储
-- 更严格的字段规范
+## 7. 日志分析辅助
 
-## 6. 日志分析辅助
+- 日志事件 ID（稳定标识，便于跨系统关联）
 
-可以增加：
-
-- 日志事件 ID
-- 错误聚合
-- 重复日志合并
-- 调用耗时统计
-- 自动生成 metrics
-- 慢请求自动记录
+> 「错误聚合」「重复日志合并」已在 M6 的聚合去重里覆盖；
+> 「metrics / 调用耗时统计」属于 APM，不放进日志库。
 
 ---
 
-# 十二、推荐的项目目录结构
+# 十二、项目目录结构
 
-如果不考虑现有平铺结构，从零设计的理想命名与结构如下：
+已落地结构如下：
 
 ```text
 logger/
 ├── CMakeLists.txt
-├── include/
-│   └── logger/                       # 库命名空间目录，避免头文件重名
-│       ├── logger.hpp                # umbrella header（聚合所有公共头，可选）
-│       ├── logger.h                  # Logger 核心 + LOG_* 宏
-│       ├── level.h                   # Level 枚举
-│       ├── record.h                  # 日志记录（原 LogMessage）
-│       ├── field.h                   # KV 字段
-│       ├── formatter.h               # 格式化接口（抽象）
-│       ├── sink.h                    # Sink 抽象接口
-│       ├── config.h                  # 配置
-│       ├── literals.h                # 字面量
-│       ├── context.h                 # ContextScope 上下文
-│       ├── error.h                   # 错误与堆栈
-│       ├── redact.h                  # 脱敏
-│       ├── dedup.h                   # 聚合去重
-│       ├── metrics.h                 # 指标
-│       ├── detail/                   # 内部实现，不进公共 API 承诺
-│       │   ├── buffer.h
-│       │   ├── clock.h
-│       │   └── queue.h
-│       ├── formatter/
-│       │   ├── text_formatter.h
-│       │   └── json_formatter.h
-│       └── sink/
-│           ├── console_sink.h
-│           ├── file_sink.h
-│           ├── rotating_file_sink.h
-│           ├── multi_sink.h
-│           └── async_sink.h
-├── src/                              # 镜像 include 结构，只放非模板实现
-│   ├── logger.cpp
-│   ├── formatter.cpp
-│   ├── formatter/
-│   │   ├── text_formatter.cpp
-│   │   └── json_formatter.cpp
-│   └── sink/
-│       └── ...
-├── examples/
-├── benchmarks/
-├── test/
-│   ├── unit/
-│   └── integration/
-└── docs/
+├── Doxyfile                          # API 文档配置（-DBUILD_DOCS=ON 后 --target docs）
+├── README.md
+├── include/logger/                   # 公共 API：头文件即接口承诺
+│   ├── logger.h                      # Logger 单例 + LOG_* 宏 + with()
+│   ├── level.h                       # 级别枚举
+│   ├── config.h                      # 配置、LogStats、脱敏规则
+│   ├── field.h                       # KV 字段 + encode 编码入口
+│   ├── literals.h                    # 容量字面量（10_mb 等）
+│   ├── version.h                     # 版本号（LOG_VERSION 等）
+│   ├── context.h                     # ContextScope 作用域上下文
+│   ├── stacktrace.h                  # 调用栈采集
+│   ├── trace.h                       # W3C traceparent 编解码
+│   ├── crash_handler.h               # 崩溃信号处理
+│   ├── sink.h                        # Sink 抽象 + SinkInput
+│   ├── sink/
+│   │   ├── console_sink.h            # 控制台（按级别分流 stdout / stderr）
+│   │   └── file_sink.h               # 文件（按日期 / 大小轮转）
+│   └── detail/                       # 内部实现：不承诺稳定，且不进 API 文档
+│       ├── utils.h                   # 时间 / 转义 / UTF-8 截断
+│       ├── error.h                   # 异常信息提取
+│       ├── dedup.h                   # 聚合去重状态机
+│       ├── record.h                  # 日志记录
+│       ├── format.h                  # {} 位置参数格式化
+│       └── formatter/
+│           ├── text_formatter.h
+│           └── json_formatter.h
+├── src/                              # 实现，目录结构与 include/ 一一对应
+│   ├── logger.cpp  field.cpp  stacktrace.cpp  trace.cpp  crash_handler.cpp
+│   ├── detail/
+│   │   ├── utils.cpp
+│   │   └── formatter/{text,json}_formatter.cpp
+│   └── sink/{console,file}_sink.cpp
+├── examples/                         # 可运行示例
+├── benchmark/                        # 性能基准（Google Benchmark，可选依赖）
+├── test/{unit,integration}/          # 单元与集成测试
+└── docs/                             # 设计文档
 ```
 
-核心原则是：
+核心原则：
 
-- 公共 API 尽量稳定（头文件即接口）
-- 公共头文件统一放在 `include/logger/` 下，消费者 `#include <logger/...>`，避免重名
-- 文件与类名去掉 `log_` 前缀（目录已含 `logger`），文件名统一 snake_case
-- 模板实现放头文件，非模板实现放 src/ 编译进库
-- Formatter 和 Sink 解耦
-- 异步逻辑不要侵入核心记录模型
-- 脱敏、聚合去重作为可插拔能力
-- 内部辅助放 `detail/`（`namespace logger::detail`），不承诺稳定
-- 低层模块尽量不依赖高层业务
-- 日志代码路径 noexcept，不向业务抛异常
-- 宏统一 `LOGGER_` 前缀，避免与业务代码宏冲突
+- **公共 API 尽量稳定**（头文件即接口）；公共头统一在 `include/logger/` 下，
+  消费者 `#include <logger/...>`，避免重名
+- **公共面按「用户能不能调用」划分**：用户拿不到的（记录模型、Formatter、
+  格式化与转义工具、异常提取、聚合去重状态机）一律放 `detail/`。
+  它同时被 Doxyfile 的 `EXCLUDE` 排除，不出现在 API 文档里 —— 这比在 Doxyfile 里
+  逐个列符号名好维护
+- **`src/` 镜像 `include/` 结构**，只放非模板实现；模板实现留在头文件
+- 文件名 snake_case，去掉 `log_` 前缀（目录已含 `logger`）
+- Formatter 与 Sink 解耦；异步逻辑不侵入记录模型
+- 脱敏、聚合去重是**可配置能力**，不是可插拔插件；不做比例采样（见 §九.4）
+- 低层模块不依赖高层业务；日志代码路径 noexcept，不向业务抛异常
+- 宏统一 `LOG_` 前缀，避免与业务代码宏冲突
+
+命名上的一处偏差（已消除）：
+
+- `__FILENAME__` 曾用双下划线前缀（属于**实现保留标识符**），M7 重构时已改为在宏里直接调用
+  `filename_of(__FILE__)`，该宏不复存在
+- `logger.hpp` 这类 umbrella header 未提供：公共头只有十来个，按需 include 即可
+- `encode` / `KV` / `filename_of` 等符号位于**全局命名空间**，这是有意的：`encode` 是自定义
+  类型的扩展点，必须在全局命名空间才能被库内的限定调用找到（见
+  [兼容性说明](compatibility.md)）
 
 ---
 
@@ -1627,14 +1654,16 @@ logger/
 
 ## v1.0.0：稳定版本
 
-包含：
+**已发布（2026-09-14）**。
 
-- 完整测试
-- 文档
-- API / ABI 稳定
-- 性能报告
-- 生产案例
-- 兼容性承诺
+| 项 | 状态 |
+|---|---|
+| 完整测试 | ✅ 7 个 ctest 目标；单元 / 集成 / 异常 / 并发 / 生命周期 / 持续高并发 |
+| 文档 | ✅ README + 8 篇指南 + 兼容性 / 性能报告 / 破坏性变更 / CHANGELOG |
+| API / ABI 稳定 | ✅ 承诺范围见 [compatibility.md](compatibility.md)（明确不承诺跨标准库 ABI） |
+| 性能报告 | ✅ [performance.md](performance.md)，16 个场景 |
+| 兼容性承诺 | ✅ 自本版本起按语义化版本承诺 |
+| 生产案例 | ❌ **无** —— 本项目未在真实业务中运行过，这一项空着 |
 
 ---
 

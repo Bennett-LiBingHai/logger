@@ -10,11 +10,14 @@
 #include <cxxabi.h>
 #endif
 
-// ===== 异常信息提取（M5：错误记录）=====
-// 把一个异常（含 std::throw_with_nested 的嵌套链）转成可读的 message/type/chain，
-// 供 LOG_EXCEPTION 自动展开为 error / error_type / error_chain 字段。
+/// @file detail/error.h
+/// @brief 异常信息提取：把一个异常（含嵌套链）转成可读的 message / type / chain。
+///
+/// 内部实现，不承诺接口稳定；用户通过 LOG_EXCEPTION 使用，不直接调用这些函数。
 
-// 反解符号名：abi::__cxa_demangle 失败时原样返回 mangled 名
+/// @brief 反解 C++ 符号名。
+/// @param mangled ABI 编码名（如 typeid().name() 的结果）。
+/// @return 可读的 C++ 名；反解失败或平台不支持时原样返回 mangled 名。
 inline std::string demangle(const char* mangled) {
   if (mangled == nullptr)
     return "unknown";
@@ -28,8 +31,14 @@ inline std::string demangle(const char* mangled) {
   return mangled;
 }
 
-// throw_with_nested 抛出的实际类型是实现内部的包装（libstdc++: std::_Nested_exception<T>，
-// libc++: std::__nested_exception<T>），对用户无意义。剥掉包装，暴露真正的异常类型 T。
+/// @brief 剥掉 throw_with_nested 的内部包装，暴露真正的异常类型。
+///
+/// `std::throw_with_nested` 抛出的实际类型是实现内部的包装
+/// （libstdc++ 是 `std::_Nested_exception<T>`，libc++ 是 `std::__nested_exception<T>`），
+/// 对使用者没有意义，必须剥掉。
+///
+/// @param name 已 demangle 的类型名。
+/// @return 剥掉包装后的类型名；没有包装时原样返回。
 inline std::string normalize_type(const std::string& name) {
   std::string cur = name;
   for (;;) {
@@ -56,7 +65,7 @@ inline std::string normalize_type(const std::string& name) {
     if (open == std::string::npos)
       return cur;
 
-    // 按尖括号配对取模板实参（实参本身可能是嵌套模板）
+    // 按尖括号配对取模板实参（实参本身可能是嵌套模板），再递归剥一层
     int depth = 0;
     for (std::size_t i = open; i < cur.size(); ++i) {
       if (cur[i] == '<')
@@ -68,18 +77,24 @@ inline std::string normalize_type(const std::string& name) {
   }
 }
 
-// 异常信息：message/type 取最内层异常，chain 为完整嵌套链
+/// @brief 提取出的异常信息。
+///
+/// `message` 与 `type` 取**最内层**（即根因），`chain` 是从外层到内层的完整链。
 struct ExceptionInfo {
-  std::string message;      // 最内层 what()
-  std::string type;         // 最内层可读类型名（demangle 后）
-  std::string chain;        // 完整链："type: msg" 或 "type: msg\n  caused by: ..."
-  bool has_nested = false;  // 是否存在嵌套异常
+  std::string message;      ///< 最内层异常的 what()
+  std::string type;         ///< 最内层异常的可读类型名（demangle 并剥包装后）
+  std::string chain;        ///< 完整链：`type: msg` 或 `type: msg\n  caused by: ...`
+  bool has_nested = false;  ///< 是否存在嵌套异常（决定要不要输出 error_chain 字段）
 };
 
-// 递归：把异常 e 写入 chain，并把最内层 message/type 写回
+/// @brief 递归展开一个异常：写入 chain，并把最内层的 message / type 回传。
+/// @param e 当前层的异常。
+/// @param chain 输出参数，累积完整链。
+/// @param innermost_msg 输出参数，最内层异常的 what()。
+/// @param innermost_type 输出参数，最内层异常的类型名。
+/// @note typeid 取的是动态类型（std::exception 有多态性），因此不会退化成基类名。
 inline void append_exception(const std::exception& e, std::string& chain,
                              std::string& innermost_msg, std::string& innermost_type) {
-  // typeid 取动态类型（std::exception 有多态性）→ demangle 成可读名 → 剥掉嵌套包装
   const std::string type = normalize_type(demangle(typeid(e).name()));
   chain += type;
   chain += ": ";
@@ -88,7 +103,7 @@ inline void append_exception(const std::exception& e, std::string& chain,
   innermost_type = type;
 
   try {
-    std::rethrow_if_nested(e);
+    std::rethrow_if_nested(e);  // 标准机制：有嵌套就继续展开
   } catch (const std::exception& nested) {
     chain += "\n  caused by: ";
     append_exception(nested, chain, innermost_msg, innermost_type);
@@ -97,7 +112,9 @@ inline void append_exception(const std::exception& e, std::string& chain,
   }
 }
 
-// 提取异常信息
+/// @brief 提取异常信息。
+/// @param e 异常对象。
+/// @return 提取结果。
 inline ExceptionInfo extract_exception(const std::exception& e) {
   ExceptionInfo info;
   append_exception(e, info.chain, info.message, info.type);
@@ -105,7 +122,9 @@ inline ExceptionInfo extract_exception(const std::exception& e) {
   return info;
 }
 
-// exception_ptr 版本：空指针给占位，非空 rethrow 后复用上面
+/// @brief 提取异常信息（exception_ptr 版本）。
+/// @param ep 异常指针；空指针返回占位内容而不是崩溃。
+/// @return 提取结果。
 inline ExceptionInfo extract_exception(const std::exception_ptr& ep) {
   if (!ep)
     return ExceptionInfo{"<no exception>", "std::exception_ptr", "<no exception>", false};

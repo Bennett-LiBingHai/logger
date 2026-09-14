@@ -1,10 +1,10 @@
-#include "logger/formatter/json_formatter.h"
+#include "logger/detail/formatter/json_formatter.h"
 
 #include <string>
 
-#include "logger/format.h"
+#include "logger/detail/format.h"
+#include "logger/detail/utils.h"
 #include "logger/level.h"
-#include "logger/utiils.h"
 
 // 追加 JSON 键："key":
 void JsonFormatter::append_key(std::string& out, const std::string& key) {
@@ -13,10 +13,15 @@ void JsonFormatter::append_key(std::string& out, const std::string& key) {
   out += "\": ";
 }
 
+// 预留长度的经验值，同 TextFormatter：避免拼接过程中反复扩容 + 拷贝
+constexpr std::size_t kHeaderReserve = 128;
+constexpr std::size_t kPerFieldReserve = 48;
+
 // 格式化Record信息,线程安全
-[[nodiscard]] FormatResult JsonFormatter::format(const Record& msg, const LogConfig& config,
-                                                 bool less) {
+[[nodiscard]] SinkInput JsonFormatter::format(const Record& msg, const LogConfig& config,
+                                              bool less) {
   std::string out;
+  out.reserve(kHeaderReserve + msg.content.size() + msg.fields.size() * kPerFieldReserve);
   out += '{';
 
   append_key(out, "time");
@@ -48,7 +53,8 @@ void JsonFormatter::append_key(std::string& out, const std::string& key) {
   if (!less) {
     out += ", ";
     append_key(out, "thread_id");
-    encode(msg.thread_id, out, true);
+    // 走缓存：encode(std::thread::id) 会落到 operator<< 分支，每条构造一次 ostringstream
+    encode(thread_id_str(msg.thread_id), out, true);
     out += ", ";
     append_key(out, "file");
     encode(msg.file, out, true);
@@ -63,5 +69,5 @@ void JsonFormatter::append_key(std::string& out, const std::string& key) {
   out += '}';
   out += '\n';
 
-  return FormatResult{std::move(out), msg.log_level};
+  return SinkInput{std::move(out), msg.log_level};
 }

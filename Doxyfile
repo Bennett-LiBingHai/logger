@@ -1,0 +1,106 @@
+# ==============================================================
+# API 文档配置（Doxygen 1.9+）
+# 生成：cmake -B build -DBUILD_DOCS=ON && cmake --build build --target docs
+#      或直接：doxygen Doxyfile
+# 产物：build/docs/html/index.html
+# ==============================================================
+
+
+# 项目名称，显示在文档标题、页眉、导航栏等位置
+PROJECT_NAME         = "logger"
+
+# 项目一句话简介，展示在文档首页标题下方
+PROJECT_BRIEF        = "C++17 结构化日志库"
+
+# 文档输出根目录，统一输出到构建目录下，与产物隔离
+OUTPUT_DIRECTORY     = build/docs
+
+# 文档界面语言
+# 说明：使用英文界面；Doxygen 1.9.4 之后中文翻译停止更新，启用中文会产生告警
+# 注：代码注释本身仍可正常使用中文编写
+OUTPUT_LANGUAGE      = English
+
+# 扫描的输入目录
+# 说明：仅扫描 include 公共头文件目录
+# src/ 为内部实现细节、examples/ 为示例代码、test/ 为测试代码，均不属于对外 API 范畴
+INPUT                = include
+
+# 递归遍历子目录
+# 说明：处理 include 目录下所有层级的头文件，适配嵌套的目录结构
+RECURSIVE            = YES
+
+# 匹配的文件模式
+# 说明：仅处理 .h 头文件，过滤源文件、资源文件等非接口文件
+FILE_PATTERNS        = *.h
+
+# 只提取有文档注释的实体
+# 说明：必须关闭 —— Doxygen 规定 EXTRACT_ALL=YES 时 WARN_IF_UNDOCUMENTED 自动失效。
+# 关闭后：写了注释的才进文档，没写的由 WARN_IF_UNDOCUMENTED 报出来，形成待补清单
+EXTRACT_ALL          = NO
+
+# 内部实现目录，不进 API 文档
+# 说明：detail/ 下是不承诺稳定的实现细节（时间/转义、异常提取、聚合去重、Record、
+# Formatter）。用户拿不到也不需要这些接口，故整目录排除 —— 比逐个列符号名好维护
+EXCLUDE              = include/logger/detail
+
+# 不提取类的私有成员
+# 说明：面向公共 API 文档，仅展示对外暴露的接口，隐藏内部实现细节与私有变量
+EXTRACT_PRIVATE      = NO
+
+# 提取静态成员与静态函数
+# 说明：日志库中的静态工具函数、单例访问接口属于公共 API 的一部分，需要纳入文档
+EXTRACT_STATIC       = YES
+
+# 不隐藏没有文档注释的成员
+HIDE_UNDOC_MEMBERS   = NO
+
+# 禁用 Graphviz 图表生成
+# 说明：本库大量使用模板元编程与类型擦除，自动生成的类继承图、函数调用图噪声大、参考价值低
+HAVE_DOT             = NO
+
+# 不生成 LaTeX / PDF 格式文档
+# 说明：仅生成 HTML 网页文档，满足在线查阅需求，减少构建耗时
+GENERATE_LATEX       = NO
+
+# 不生成源代码浏览器页面
+# 说明：面向 API 使用者，无需展示源码实现细节，仅提供接口声明与说明即可
+SOURCE_BROWSER       = NO
+
+# 生成左侧树形导航栏
+# 说明：提供层级化的类、命名空间、文件导航，方便快速定位接口
+GENERATE_TREEVIEW    = YES
+
+# 不使用完整侧边栏模式
+# 说明：保持页面简洁，仅保留核心导航树，避免侧边栏元素过多干扰文档阅读
+FULL_SIDEBAR         = NO
+
+# 启用内置前端搜索功能
+# 说明：支持关键词快速检索类、函数、宏等接口，提升文档查阅效率
+SEARCHENGINE         = YES
+
+# 将文档警告视为构建错误
+WARN_AS_ERROR        = YES
+
+# 告警未添加文档注释的实体
+# 说明：作为「待补注释」清单使用；配合 EXTRACT_ALL=NO 才生效
+WARN_IF_UNDOCUMENTED = YES
+
+# 告警文档注释中的语法错误
+# 说明：及时发现注释参数不匹配、标签写错、格式错误等问题，保证文档质量
+WARN_IF_DOC_ERROR    = YES
+
+# 告警「写了 @param 但漏了部分参数」的情况
+# 说明：只要求参数与返回值成对完整，不强制所有函数都必须写 @param
+WARN_NO_PARAMDOC     = YES
+
+# 安静模式
+# 说明：仅输出错误信息，不输出进度日志；集成到构建脚本时保持输出整洁
+QUIET                = YES
+
+# 输入文件编码
+# 说明：指定源码文件编码为 UTF-8，保证中文注释正常解析与显示
+INPUT_ENCODING       = UTF-8
+
+# 启用 Markdown 语法支持
+# 说明：允许在注释中使用 Markdown 标题、列表、代码块、粗体、链接等格式，提升文档可读性
+MARKDOWN_SUPPORT     = YES

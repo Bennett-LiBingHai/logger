@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "logger/error.h"
+#include "logger/detail/error.h"
 #include "logger/logger.h"
 
 #include "test_helpers.h"

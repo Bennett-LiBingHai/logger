@@ -5,7 +5,7 @@
 ConsoleSink::ConsoleSink(LogLevel errlevel) : errlevel_{errlevel} {}
 
 // 打印日志,输入格式化后的信息
-bool ConsoleSink::log(const FormatResult& result) {
+bool ConsoleSink::log(const SinkInput& result) {
   std::ostream& os = (result.level < errlevel_) ? std::cout : std::cerr;
   os << result;
   return !os.fail();

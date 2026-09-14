@@ -38,6 +38,27 @@ jobs:
             \( -name '*.h' -o -name '*.hpp' -o -name '*.cpp' -o -name '*.cc' -o -name '*.cxx' \) \
             -exec clang-format-18 --dry-run --Werror {} +
 
+  clang-tidy:
+    name: Static analysis (clang-tidy)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ clang-tidy-18
+
+      # compile_commands.json 由 CMAKE_EXPORT_COMPILE_COMMANDS 生成（CMakeLists 里已默认打开）
+      # 关掉测试与基准：静态分析只关心库本身，能省一半配置时间
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF
+
+      - name: Run clang-tidy
+        run: |
+          clang-tidy-18 -p build --quiet -warnings-as-errors='*' \
+            src/*.cpp src/detail/*.cpp src/detail/formatter/*.cpp src/sink/*.cpp
+
   sanitizers:
     name: Sanitizers (ASan + UBSan)
     runs-on: ubuntu-24.04
@@ -80,3 +101,21 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build-tsan --output-on-failure
+
+  docs:
+    name: API Docs
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install doxygen
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y doxygen
+
+      - name: Generate API docs
+        run: doxygen Doxyfile
+
+      # 生成成功即通过；WARN_AS_ERROR=NO，文档警告不阻塞构建
+      - name: Check output
+        run: test -f build/docs/html/index.html
