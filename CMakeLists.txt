@@ -44,6 +44,7 @@ add_library(logger::logger ALIAS logger)
 target_compile_features(logger PUBLIC cxx_std_17)
 
 # BUILD_INTERFACE / INSTALL_INTERFACE：源码树里指向 include/，安装后指向 <前缀>/include
+include(GNUInstallDirs)
 target_include_directories(
     logger PUBLIC $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
                   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
@@ -61,7 +62,6 @@ endif()
 # 装完之后外部项目可以：
 #   find_package(logger 1.0 REQUIRED)
 #   target_link_libraries(app PRIVATE logger::logger)
-include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
 install(TARGETS logger EXPORT loggerTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
