@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <fstream>
 #include <gtest/gtest.h>
 #include <iterator>
@@ -11,7 +12,15 @@
 #include "logger/logger.h"
 #include "logger/sink/console_sink.h"
 
+using namespace logger;          // 库的公共符号
+using namespace logger::detail;  // 白盒用例要直接构造 Record / Formatter 等内部类型
+
 namespace {
+
+// 空指针的来源必须对优化器不可知：-O2 以上默认开 -fdelete-null-pointer-checks，
+// 对「编译期已知为空」的指针做解引用属于 UB，编译器会直接把整段删掉 —— 于是崩溃
+// 不再发生，这条用例就在测空气。走一趟 volatile 全局，值只在运行期可见。
+volatile std::uintptr_t g_null_addr = 0;
 
 // 外部链接的全局函数，addr2line 才能解析出名字
 __attribute__((noinline)) void crash_c(int* p) {
@@ -67,7 +76,7 @@ TEST(CrashHandlerTest, DumpContainsPreciseCrashInfo) {
   const pid_t pid = ::fork();
   ASSERT_GE(pid, 0);
   if (pid == 0) {
-    crash_a(nullptr);
+    crash_a(reinterpret_cast<int*>(g_null_addr));
     _exit(0);
   }
 
@@ -102,7 +111,7 @@ TEST(CrashHandlerTest, ManualObserveCrashDump) {
   const pid_t pid = ::fork();
   ASSERT_GE(pid, 0);
   if (pid == 0) {
-    crash_a(nullptr);  // 子进程在这里崩溃，不会返回
+    crash_a(reinterpret_cast<int*>(g_null_addr));  // 子进程在这里崩溃，不会返回
     _exit(0);
   }
 

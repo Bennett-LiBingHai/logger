@@ -1,5 +1,11 @@
 # Trace 集成指南
 
+> 下文示例假定文件顶部有 `#include <logger/logger.h>`（统一入口，其余公共头都由它带进来）
+> 和 `using namespace logger;`（库的公共符号都在 `logger::` 下，只有 `LOG_*` 宏在全局）。
+> 示例里出现的 `#include <logger/xxx.h>` 只是为了指明那个能力定义在哪个头，
+> 实际只需包含统一入口 `logger/logger.h`。
+
+
 本库**不实现链路追踪**：不建 span 树、不上报、不主动改 HTTP 头。它只做一件事——
 把 W3C traceparent 里的标识接过来，写进日志字段，并把 traceparent 交给下游。
 

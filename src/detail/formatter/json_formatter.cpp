@@ -6,6 +6,7 @@
 #include "logger/detail/utils.h"
 #include "logger/level.h"
 
+namespace logger::detail {
 // 追加 JSON 键："key":
 void JsonFormatter::append_key(std::string& out, const std::string& key) {
   out += '"';
@@ -71,3 +72,5 @@ constexpr std::size_t kPerFieldReserve = 48;
 
   return SinkInput{std::move(out), msg.log_level};
 }
+
+}  // namespace logger::detail

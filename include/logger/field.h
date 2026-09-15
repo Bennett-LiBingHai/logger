@@ -14,6 +14,7 @@
 #include "logger/detail/utils.h"
 #include "logger/stacktrace.h"
 
+namespace logger {
 /// @file field.h
 /// @brief 文本 / JSON 共用的底层编码入口，以及结构化字段 Field 与 KV()。
 
@@ -32,7 +33,7 @@
 inline void encode(std::string_view v, std::string& o, bool json) {
   if (json) {
     o += '"';
-    o.append(json_escape(std::string(v)));
+    o.append(detail::json_escape(std::string(v)));
     o += '"';
   } else {
     o.append(v);
@@ -259,7 +260,8 @@ FieldValue FieldValue::from(T&& v) {
   // 被实例化，枚举下会再刷一屏 encode 重载决议的候选列表
   if constexpr (!std::is_enum_v<U>) {
     fv.encode_ = [](const void* p, std::string& out, bool json) {
-      ::encode(*static_cast<const U*>(p), out, json);
+      using ::logger::encode;  // 先把库的重载带进作用域（否则会先找到成员 FieldValue::encode）
+      encode(*static_cast<const U*>(p), out, json);  // 非限定：ADL 才能找到用户命名空间里的重载
     };
   }
   fv.clone_ = [](const void* p) -> void* { return new U(*static_cast<const U*>(p)); };
@@ -299,3 +301,5 @@ auto split_fields(std::vector<Field>& fields, T&& first, Rest&&... rest) {
     return std::tuple_cat(std::forward_as_tuple(std::forward<T>(first)), std::move(tail));
   }
 }
+
+}  // namespace logger

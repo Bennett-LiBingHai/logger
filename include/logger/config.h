@@ -6,6 +6,7 @@
 
 #include "logger/level.h"
 
+namespace logger {
 /// @file config.h
 /// @brief 运行期配置、统计快照与敏感字段判定。
 
@@ -131,3 +132,5 @@ struct LogConfig {
   unsigned long long buffer_size = 10000;  ///< 异步队列的最大长度
   AsyQueFulStrategy asy_que_ful_strategy = AsyQueFulStrategy::Block;  ///< 队列满时的策略
 };
+
+}  // namespace logger

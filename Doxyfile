@@ -12,6 +12,9 @@ PROJECT_NAME         = "logger"
 # 项目一句话简介，展示在文档首页标题下方
 PROJECT_BRIEF        = "C++17 结构化日志库"
 
+# 用 docs/mainpage.md 当首页（不直接用 README：它引用的 docs/*.md 不在 INPUT 里，会变成死链）
+USE_MDFILE_AS_MAINPAGE = docs/mainpage.md
+
 # 文档输出根目录，统一输出到构建目录下，与产物隔离
 OUTPUT_DIRECTORY     = build/docs
 
@@ -23,7 +26,7 @@ OUTPUT_LANGUAGE      = English
 # 扫描的输入目录
 # 说明：仅扫描 include 公共头文件目录
 # src/ 为内部实现细节、examples/ 为示例代码、test/ 为测试代码，均不属于对外 API 范畴
-INPUT                = include
+INPUT                = include docs/mainpage.md
 
 # 递归遍历子目录
 # 说明：处理 include 目录下所有层级的头文件，适配嵌套的目录结构

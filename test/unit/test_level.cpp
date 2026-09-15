@@ -3,6 +3,8 @@
 
 #include "logger/level.h"
 
+using namespace logger;  // 库的公共符号
+
 // M1：日志级别定义与字符串映射
 TEST(LogLevelTest, ValuesAreStrictlyIncreasing) {
   // 级别过滤依赖该顺序：logLevel < config_.log_level 时被忽略

@@ -9,6 +9,9 @@
 
 #include "test_helpers.h"
 
+using namespace logger;          // 库的公共符号
+using namespace logger::detail;  // 白盒用例要直接构造 Record / Formatter 等内部类型
+
 // M6：聚合去重 —— 相同 (level, file, line) 在窗口内只输出首条，序列结束补重复次数
 
 // ===== DedupFilter 纯逻辑 =====

@@ -1,0 +1,11 @@
+@PACKAGE_INIT@
+
+# 导出的 logger::logger 依赖 Threads::Threads（日志器内部有后台线程），
+# 所以消费者这边必须先把该导入目标准备好，否则 include 目标文件时会报
+# "The link interface of target logger::logger contains Threads::Threads but the target was not found"
+include(CMakeFindDependencyMacro)
+find_dependency(Threads)
+
+include("${CMAKE_CURRENT_LIST_DIR}/loggerTargets.cmake")
+
+check_required_components(logger)

@@ -3,6 +3,8 @@
 #include <memory>
 #include <string>
 
+using namespace logger;  // 库的公共符号都在 logger:: 下
+
 // 文件输出与轮转：按大小切分，最多保留 max_backups 个文件
 int main() {
   FileSinkConfig sink_cfg;

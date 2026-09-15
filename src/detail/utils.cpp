@@ -3,6 +3,7 @@
 #include <ctime>
 #include <sstream>
 
+namespace logger::detail {
 // 线程 id 的文本形式，按 id 缓存。见头文件里的说明
 const std::string& thread_id_str(std::thread::id id) {
   // 单槽缓存：同一个线程连续打日志时命中（同步模式必然命中）。
@@ -201,3 +202,5 @@ void truncate_utf8(std::string& s, std::size_t limit) {
   if (limit >= 3)
     s += "...";
 }
+
+}  // namespace logger::detail

@@ -1,5 +1,11 @@
 # 故障排查
 
+> 下文示例假定文件顶部有 `#include <logger/logger.h>`（统一入口，其余公共头都由它带进来）
+> 和 `using namespace logger;`（库的公共符号都在 `logger::` 下，只有 `LOG_*` 宏在全局）。
+> 示例里出现的 `#include <logger/xxx.h>` 只是为了指明那个能力定义在哪个头，
+> 实际只需包含统一入口 `logger/logger.h`。
+
+
 按现象查。每条都给「先看什么 → 常见原因 → 怎么确认」。
 
 ## 一条日志都没有

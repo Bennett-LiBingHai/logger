@@ -5,6 +5,9 @@
 
 #include "test_helpers.h"
 
+using namespace logger;          // 库的公共符号
+using namespace logger::detail;  // 白盒用例要直接构造 Record / Formatter 等内部类型
+
 // 优雅关闭：独立二进制（close() 会停止异步线程，单例不可复用）。
 // 验证 close() 能把队列中剩余日志完整刷出，且返回统计信息。
 TEST(AsyncCloseTest, CloseDrainsQueue) {

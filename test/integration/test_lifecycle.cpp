@@ -6,6 +6,9 @@
 
 #include "logger/logger.h"
 
+using namespace logger;          // 库的公共符号
+using namespace logger::detail;  // 白盒用例要直接构造 Record / Formatter 等内部类型
+
 // M7：生命周期 —— 并发 close、重复 close、线程回收
 //
 // 独立二进制：单例的异步线程一旦 close 便不可重启，会污染其它用例。

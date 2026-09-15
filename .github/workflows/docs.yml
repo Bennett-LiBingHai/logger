@@ -1,0 +1,63 @@
+name: Docs
+
+# 把生成的 API 文档发布到 GitHub Pages。
+# 首次使用需要在仓库设置里把 Pages 的 Source 改成 "GitHub Actions"：
+#   Settings → Pages → Build and deployment → Source = GitHub Actions
+# 之后每次推 main 都会自动更新 https://<用户名>.github.io/logger/
+
+on:
+  push:
+    branches: [main]
+    # 只有可能影响文档的东西变了才重新发布
+    paths:
+      - 'include/**'
+      - 'docs/mainpage.md'
+      - 'Doxyfile'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只跑一个发布；不打断正在进行的（避免 Pages 上出现半份产物）
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build API docs
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake doxygen
+
+      # 走 CMake 的 docs 目标：它会先清空输出目录再生成，避免上次的残留页面混进来。
+      # Doxyfile 里 WARN_AS_ERROR=YES，所以文档告警会直接让这一步失败
+      - name: Generate
+        run: |
+          cmake -S . -B build -DBUILD_DOCS=ON -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF
+          cmake --build build --target docs
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/docs/html
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

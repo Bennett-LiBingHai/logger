@@ -2,6 +2,10 @@
 #include "logger/level.h"
 #include "logger/sink.h"
 
+namespace logger {
+/// @file sink/console_sink.h
+/// @brief 控制台输出槽（按级别分流 stdout / stderr）。
+
 /// @brief 控制台输出槽：按级别把日志分流到 stdout 与 stderr。
 ///
 /// 低于 errlevel 的写 stdout，达到或高于的写 stderr。这样在容器或脚本里可以把
@@ -28,3 +32,5 @@ class ConsoleSink : public LogSink {
  private:
   LogLevel errlevel_;  ///< 输出到 stderr 的最低级别
 };
+
+}  // namespace logger

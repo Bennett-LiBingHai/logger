@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <random>
 
+namespace logger {
 namespace {
 
 // traceparent 各段字符数
@@ -151,3 +152,5 @@ std::string make_traceparent(const TraceContext& ctx) {
   out += ctx.trace_flags;
   return out;
 }
+
+}  // namespace logger

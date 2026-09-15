@@ -11,6 +11,9 @@
 
 #include "test_helpers.h"
 
+using namespace logger;          // 库的公共符号
+using namespace logger::detail;  // 白盒用例要直接构造 Record / Formatter 等内部类型
+
 // M7：持续高并发 —— 固定时长内多线程持续写入，断言不丢、不交叉、不崩
 //
 // 时长默认 2 秒（CI 友好），可用环境变量调大：

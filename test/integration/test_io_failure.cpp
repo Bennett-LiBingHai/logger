@@ -11,6 +11,9 @@
 
 #include "test_helpers.h"
 
+using namespace logger;          // 库的公共符号
+using namespace logger::detail;  // 白盒用例要直接构造 Record / Formatter 等内部类型
+
 // M7：文件系统异常 —— 权限、目录消失、写失败降级、fd 泄漏
 //
 // 未覆盖：ENOSPC（磁盘满）。要真实触发需要 root 挂一个很小的 tmpfs；

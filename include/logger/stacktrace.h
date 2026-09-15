@@ -3,6 +3,10 @@
 #include <string>
 #include <vector>
 
+namespace logger {
+/// @file stacktrace.h
+/// @brief 调用栈的采集与惰性符号化。
+
 /// @brief 调用栈采集：采集与符号化分离。
 ///
 /// capture() 只调用 backtrace() 拿返回地址列表（快、不分配）；str() 才把地址
@@ -48,3 +52,5 @@ class StackTrace {
   mutable std::string cached_;       ///< 符号化结果缓存
   mutable bool symbolized_ = false;  ///< 缓存是否已生成
 };
+
+}  // namespace logger

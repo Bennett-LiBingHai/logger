@@ -2,6 +2,8 @@
 
 #include "logger/config.h"
 
+using namespace logger;  // 库的公共符号
+
 // M1：默认配置
 TEST(LogConfigTest, DefaultsAllowAllLevelsAndIso8601) {
   LogConfig config;

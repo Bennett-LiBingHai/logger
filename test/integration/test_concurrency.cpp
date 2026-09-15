@@ -8,6 +8,9 @@
 
 #include "test_helpers.h"
 
+using namespace logger;          // 库的公共符号
+using namespace logger::detail;  // 白盒用例要直接构造 Record / Formatter 等内部类型
+
 // M1：并发安全 —— 多线程同时写日志，无数据竞争、内容不交叉、不丢失。
 // 本测试也可在 ThreadSanitizer 下运行（编译加 -fsanitize=thread）验证无数据竞争。
 class LoggerConcurrencyTest : public ::testing::Test {

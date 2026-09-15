@@ -4,9 +4,10 @@
 
 #include "logger/detail/utils.h"
 
+namespace logger {
 // 时间点 → ISO8601 字符串（本地时间 + 毫秒），JSON 下带引号
 void encode(std::chrono::system_clock::time_point v, std::string& o, bool json) {
-  std::string s = format_time_ms(v, LogConfig{});
+  std::string s = detail::format_time_ms(v, LogConfig{});
   encode(s, o, json);
 }
 
@@ -15,7 +16,7 @@ void encode(const StackTrace& v, std::string& o, bool json) {
   const std::string& s = v.str();
   if (json) {
     o += '"';
-    o += json_escape(s);
+    o += detail::json_escape(s);
     o += '"';
   } else {
     for (char c : s)
@@ -89,3 +90,5 @@ void dedup_fields(std::vector<Field>& fields) {
   }
   fields = std::move(out);
 }
+
+}  // namespace logger

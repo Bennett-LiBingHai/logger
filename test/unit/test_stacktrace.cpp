@@ -9,11 +9,18 @@
 
 #include "test_helpers.h"
 
+using namespace logger;          // 库的公共符号
+using namespace logger::detail;  // 白盒用例要直接构造 Record / Formatter 等内部类型
+
 // M5：堆栈信息 —— 采集、符号化、预算截断、与 Logger 的接线
 //
 // 注意：capture_in_named_frame 必须放在全局作用域（外部链接）。
 // 匿名命名空间 / static 函数是内部链接，不进 .dynsym，dladdr 解不出符号名。
-StackTrace capture_in_named_frame() {
+//
+// noinline 是必须的：-O3 下这个函数会被内联进调用者，栈上就没有它的帧了，
+// 而"被内联掉的帧解不出名字"正是库的既定行为（见 docs/guides/errors-and-stacktrace.md），
+// 不是缺陷 —— 这条用例要测的是"能符号化的帧确实被符号化了"，得先保证帧存在
+__attribute__((noinline)) StackTrace capture_in_named_frame() {
   return StackTrace::capture();
 }
 

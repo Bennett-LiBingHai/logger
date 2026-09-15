@@ -4,6 +4,7 @@
 
 #include "logger/level.h"
 
+namespace logger::detail {
 /// @file detail/dedup.h
 /// @brief 聚合去重：同一线程内，相同来源的重复日志折叠成「首条 + 次数摘要」。
 ///
@@ -105,3 +106,5 @@ inline DedupFilter& dedup_filter() {
   static thread_local DedupFilter filter;
   return filter;
 }
+
+}  // namespace logger::detail

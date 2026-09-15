@@ -2,6 +2,7 @@
 
 #include <iostream>
 
+namespace logger {
 ConsoleSink::ConsoleSink(LogLevel errlevel) : errlevel_{errlevel} {}
 
 // 打印日志,输入格式化后的信息
@@ -16,3 +17,5 @@ void ConsoleSink::flush() {
   std::cout << std::flush;
   std::cerr << std::flush;
 }
+
+}  // namespace logger

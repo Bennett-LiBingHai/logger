@@ -11,6 +11,9 @@
 
 #include "test_helpers.h"
 
+using namespace logger;          // 库的公共符号
+using namespace logger::detail;  // 白盒用例要直接构造 Record / Formatter 等内部类型
+
 // 异步日志：独立二进制，避免污染 test_logger 的单例状态。
 // 单例的异步线程一旦启动便不可回退，故本文件内的用例共享同一个异步 Logger，
 // 每个用例结束前都会 flush_all() 排空队列，避免相互影响。

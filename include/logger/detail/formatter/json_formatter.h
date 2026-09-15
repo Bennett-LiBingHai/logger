@@ -5,6 +5,7 @@
 #include "logger/detail/record.h"
 #include "logger/sink.h"
 
+namespace logger::detail {
 /// @file detail/formatter/json_formatter.h
 /// @brief JSON 格式：一条记录一行，便于下游按字段检索。
 ///
@@ -43,3 +44,5 @@ class JsonFormatter {
   /// @param key 键名（不含引号）。
   static void append_key(std::string& out, const std::string& key);
 };
+
+}  // namespace logger::detail

@@ -6,6 +6,7 @@
 
 #include "logger/config.h"
 
+namespace logger::detail {
 /// @file detail/utils.h
 /// @brief 时间格式化、文本/JSON 转义、UTF-8 安全截断与线程 id 缓存。
 ///
@@ -80,3 +81,5 @@ void append_text_escaped(std::string_view raw, std::string& out);
 /// @param limit 字节上限；0 表示截断为空。
 /// @note 会退到完整码点边界，绝不切出非法 UTF-8；被截断时以 "..." 结尾。
 void truncate_utf8(std::string& s, std::size_t limit);
+
+}  // namespace logger::detail

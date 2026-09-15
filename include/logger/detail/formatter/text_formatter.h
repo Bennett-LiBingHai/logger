@@ -3,6 +3,7 @@
 #include "logger/detail/record.h"
 #include "logger/sink.h"
 
+namespace logger::detail {
 /// @file detail/formatter/text_formatter.h
 /// @brief 文本格式：一条记录一行。
 ///
@@ -34,3 +35,5 @@ class TextFormatter {
   [[nodiscard]] static SinkInput format(const Record& msg, const LogConfig& config,
                                         bool less = false);
 };
+
+}  // namespace logger::detail

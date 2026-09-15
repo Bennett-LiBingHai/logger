@@ -8,6 +8,8 @@
 #if defined(__GLIBC__)
 #include <dlfcn.h>
 #include <execinfo.h>
+
+namespace logger {
 #define LOGGER_HAS_BACKTRACE 1
 
 namespace {
@@ -20,7 +22,7 @@ std::string symbolize_frame(void* addr) {
   if (info.dli_sname == nullptr)  // 无符号名是常态（如 stripped 的 libc、静态函数）
     return info.dli_fname ? info.dli_fname : "???";
 
-  std::string frame = demangle(info.dli_sname);
+  std::string frame = detail::demangle(info.dli_sname);
   char buf[320];
   const auto off = static_cast<const char*>(addr) - static_cast<const char*>(info.dli_saddr);
   std::snprintf(buf, sizeof(buf), " (%s+0x%zx)", info.dli_fname ? info.dli_fname : "?",
@@ -87,3 +89,5 @@ const std::string& StackTrace::str() const {
 #endif
   return cached_;
 }
+
+}  // namespace logger

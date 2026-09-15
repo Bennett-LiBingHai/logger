@@ -7,6 +7,9 @@
 
 #include "test_helpers.h"
 
+using namespace logger;          // 库的公共符号
+using namespace logger::detail;  // 白盒用例要直接构造 Record / Formatter 等内部类型
+
 // M5：Trace 系统集成 —— traceparent 编解码与字段挂载
 
 namespace {

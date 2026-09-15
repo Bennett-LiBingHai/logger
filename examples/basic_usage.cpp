@@ -2,6 +2,8 @@
 #include <logger/sink/console_sink.h>
 #include <memory>
 
+using namespace logger;  // 库的公共符号都在 logger:: 下
+
 int main() {
   // 挂一个控制台 Sink：Error 及以上 → stderr，其余 → stdout
   Logger::get_instance().add_sink(std::make_shared<ConsoleSink>());

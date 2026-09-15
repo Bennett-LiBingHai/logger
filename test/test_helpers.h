@@ -9,9 +9,9 @@
 #include "logger/sink.h"
 
 // 捕获日志输出的测试用 Sink（线程安全），用于断言 Logger 实际写出的内容。
-class CapturingSink : public LogSink {
+class CapturingSink : public logger::LogSink {
  public:
-  bool log(const SinkInput& result) override {
+  bool log(const logger::SinkInput& result) override {
     std::lock_guard<std::mutex> lock(mtx_);
     messages_.push_back(result.formatted_msg);
     return true;
@@ -44,9 +44,9 @@ class CapturingSink : public LogSink {
 };
 
 // 只失败一次的 Sink，用于测试失败策略（避免污染单例后续用例）
-class FailOnceSink : public LogSink {
+class FailOnceSink : public logger::LogSink {
  public:
-  bool log(const SinkInput& /*result*/) override {
+  bool log(const logger::SinkInput& /*result*/) override {
     if (failed_)
       return true;
     failed_ = true;
@@ -60,11 +60,11 @@ class FailOnceSink : public LogSink {
 
 // 门控 Sink：log() 先记录消息，再阻塞直到 open()。
 // block_first 指定前 N 次 log() 调用阻塞（默认全部阻塞），用于队列满测试中卡住后台线程。
-class GateSink : public LogSink {
+class GateSink : public logger::LogSink {
  public:
   explicit GateSink(size_t block_first = ~size_t{0}) : block_first_(block_first) {}
 
-  bool log(const SinkInput& result) override {
+  bool log(const logger::SinkInput& result) override {
     {
       std::lock_guard<std::mutex> lock(mtx_);
       messages_.push_back(result.formatted_msg);
@@ -134,9 +134,9 @@ class GateSink : public LogSink {
 };
 
 // 只抛异常一次的 Sink，用于测试日志不因 sink 异常而崩溃
-class ThrowOnceSink : public LogSink {
+class ThrowOnceSink : public logger::LogSink {
  public:
-  bool log(const SinkInput& /*result*/) override {
+  bool log(const logger::SinkInput& /*result*/) override {
     if (thrown_)
       return true;
     thrown_ = true;

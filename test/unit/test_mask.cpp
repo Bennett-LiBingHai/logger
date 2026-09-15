@@ -7,6 +7,9 @@
 
 #include "test_helpers.h"
 
+using namespace logger;          // 库的公共符号
+using namespace logger::detail;  // 白盒用例要直接构造 Record / Formatter 等内部类型
+
 // M6：敏感字段脱敏 —— 默认脱敏函数、启用开关、类型保留、异常兜底
 
 class MaskTest : public ::testing::Test {

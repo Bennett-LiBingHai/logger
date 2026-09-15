@@ -66,6 +66,25 @@ cmake -S . -B build
 cmake --build build
 ```
 
+## 作为依赖使用
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+cmake --install build --prefix /your/prefix
+```
+
+```cmake
+find_package(logger 1.0 REQUIRED)          # 找到 <prefix>/lib/cmake/logger/loggerConfig.cmake
+target_link_libraries(app PRIVATE logger::logger)
+```
+
+- 目标名是**带命名空间**的 `logger::logger`（`add_subdirectory` 引入时同名别名也能用，
+  不会和别的项目的 `logger` 目标撞名）
+- 版本按主版本兼容（`SameMajorVersion`）：装的是 1.x，请求 `1.0` 能过，请求 `2.0` 会被拒
+- 链接它会自动带上 `-rdynamic`（堆栈符号化要用）、`Threads` 与 `dl`，不用自己加
+- 一个跑通的例子在 [test/consumer/](test/consumer/)，CI 里有对应的 job 守着这条路
+
 ## 开发工具
 
 代码格式化统一用 **clang-format 18**（配置见 [.clang-format](.clang-format)）：
@@ -95,9 +114,10 @@ clang-tidy-18 -p build --quiet src/*.cpp src/detail/*.cpp \
 ## 快速开始
 
 ```cpp
-#include <logger/logger.h>
-#include <logger/sink/console_sink.h>
+#include <logger/logger.h>   // 统一入口：其余公共头都由它带进来
 #include <memory>
+
+using namespace logger;   // 库的公共符号都在 logger:: 下
 
 int main() {
     // Error 及以上 → stderr，其余 → stdout
@@ -121,6 +141,10 @@ int main() {
     return 0;
 }
 ```
+
+> **命名空间**：库的公共类型与函数都在 `logger::` 里，只有 `LOG_*` 宏在全局（宏没有命名空间，
+> 宏内部已用全限定名，所以在任何命名空间里都能用）。下文示例假定文件顶部有
+> `using namespace logger;`；不想引入它的就写全限定名（`logger::Logger::get_instance()`）。
 
 完整可运行示例在 [examples/](examples/)，构建后直接跑：
 
@@ -496,9 +520,10 @@ ctest --test-dir build-tsan
 ```text
 logger/
 ├── CMakeLists.txt
+├── cmake/loggerConfig.cmake.in     # find_package 用的包配置模板
 ├── Doxyfile                        # API 文档配置（cmake -DBUILD_DOCS=ON --target docs）
 ├── include/logger/                 # 公共 API（头文件即接口承诺）
-│   ├── logger.h                    # Logger 单例 + LOG_* 宏 + with()
+│   ├── logger.h                    # 统一入口：单例 + LOG_* 宏 + with() + 其余公共头
 │   ├── level.h                     # 级别枚举
 │   ├── config.h                    # 配置、LogStats、脱敏规则
 │   ├── field.h                     # KV 字段 + encode 编码入口
@@ -533,13 +558,22 @@ logger/
 └── docs/                           # 设计文档与指南
 ```
 
-`include/logger/detail/` 下的内容随时可能改，不承诺接口稳定。公共头只有十来个，
-按需 include 即可（不提供 umbrella header）。
+`include/logger/logger.h` 是**统一入口**，其余公共头都由它带进来 —— 包含这一个就够：
+
+```cpp
+#include <logger/logger.h>
+using namespace logger;   // 库的公共符号都在 logger:: 下
+```
+
+目录树里列出的其它公共头是各能力的定义位置，**不需要也不推荐单独包含**。
+
+`include/logger/detail/` 下的内容随时可能改，不承诺接口稳定。
 
 ## 文档索引
 
 | 文档 | 内容 |
 |---|---|
+| [在线 API 文档](https://bennett-libinghai.github.io/logger/) | Doxygen 生成，随 main 自动更新 |
 | [结构化日志指南](docs/guides/structured-logging.md) | 字段类型、命名规范、非法字段、转义规则 |
 | [上下文指南](docs/guides/context.md) | `ContextScope`、字段优先级、跨线程传递 |
 | [错误与堆栈指南](docs/guides/errors-and-stacktrace.md) | 异常展开、嵌套链、`StackTrace` 采集与符号化 |
@@ -561,6 +595,14 @@ sudo apt install doxygen
 cmake -S . -B build -DBUILD_DOCS=ON
 cmake --build build --target docs      # 产物在 build/docs/html/index.html
 ```
+
+推送到 `main` 后会自动发布到 GitHub Pages：
+
+**https://bennett-libinghai.github.io/logger/**
+
+> 首次启用需要在仓库 **Settings → Pages → Build and deployment** 里把 Source 设为
+> **GitHub Actions**。`docs` 目标会先清空输出目录再生成，避免上次的残留页面混进来。
+> 首页内容取自 [docs/mainpage.md](docs/mainpage.md)。
 
 ## 提交规范
 

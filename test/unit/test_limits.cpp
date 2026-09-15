@@ -9,6 +9,9 @@
 
 #include "test_helpers.h"
 
+using namespace logger;          // 库的公共符号
+using namespace logger::detail;  // 白盒用例要直接构造 Record / Formatter 等内部类型
+
 // M6：日志长度限制 —— UTF-8 安全截断、消息上限、字段上限、整条预算
 
 // ===== truncate_utf8 =====

@@ -3,6 +3,9 @@
 
 #include "logger/detail/format.h"
 
+using namespace logger;          // 库的公共符号
+using namespace logger::detail;  // 白盒用例要直接构造 Record / Formatter 等内部类型
+
 // M2：{} 位置参数格式化（消息正文）
 TEST(FormatTest, InterpolatesPositionalArgs) {
   EXPECT_EQ(format("user {} login", 1001), "user 1001 login");

@@ -8,6 +8,7 @@
 #include "logger/field.h"
 #include "logger/level.h"
 
+namespace logger::detail {
 /// @file detail/record.h
 /// @brief 一条日志记录的数据模型。
 ///
@@ -28,3 +29,5 @@ struct Record {
   std::vector<Field> fields;  ///< 结构化字段（有序、保留类型）
   std::uint64_t repeat_count = 0;  ///< 消息重复出现的次数（聚合去重填充，> 1 才输出）
 };
+
+}  // namespace logger::detail

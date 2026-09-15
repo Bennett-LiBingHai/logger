@@ -13,11 +13,12 @@
 
 ## 1. 公共 API 的边界
 
-**公共面**就是这些头文件，它们的内容即接口承诺：
+**公共面**就是这些头文件，它们的内容即接口承诺。`logger.h` 是**统一入口**，包含其余全部
+公共头 —— 包含这一个即可，其余文件只是各能力的定义位置：
 
 ```text
 include/logger/
-├── logger.h          logger 单例、LOG_* 宏、with()
+├── logger.h          统一入口：单例、LOG_* 宏、with()，并包含下列全部
 ├── level.h           级别枚举
 ├── config.h          配置、LogStats、脱敏规则
 ├── field.h           encode 扩展点、Field / FieldValue、KV
@@ -81,48 +82,62 @@ struct LogConfig {
 };
 ```
 
-**实践建议**：本库是静态库，跟应用一起编译即可，不要跨编译器混链。
+**实践建议**：本库是静态库，跟应用一起编译即可，不要跨编译器混链。装好后用
+`find_package(logger 1.0 REQUIRED)` + `target_link_libraries(app PRIVATE logger::logger)`
+引入（版本按主版本兼容），具体见 [README](../README.md#作为依赖使用)。
 另外 `-rdynamic` 由 `INTERFACE` 传递，最终可执行文件必须带上（否则堆栈符号化退化成模块名 + 偏移）。
 
-## 4. 宏与命名冲突
+## 4. 命名空间与命名冲突
 
-宏都带 `LOG_` 前缀，与业务宏冲突的概率很低：
+库的公共符号都在 `namespace logger` 里：
+
+```cpp
+using namespace logger;   // 或者写全限定名 logger::Logger
+
+LogConfig cfg;
+cfg.format = LogFormat::JSON;
+Logger::get_instance().set_config(cfg);
+Logger::get_instance().info("paid", KV("amount", 99.5));
+```
+
+**只有宏在全局** —— 宏没有命名空间：
 
 ```text
 LOG_TRACE  LOG_DEBUG  LOG_INFO  LOG_WARN  LOG_ERROR  LOG_FATAL  LOG_EXCEPTION
+LOG_VERSION  LOG_VERSION_MAJOR  LOG_VERSION_MINOR  LOG_VERSION_PATCH  LOG_VERSION_CODE
 ```
 
-**`KV` 没有前缀** —— 它是函数模板而不是宏（类型安全、能编译期拦空 key），所以不进宏命名空间。
+宏内部用的是全限定名（`::logger::Logger::get_instance()`），所以在任何命名空间里都能直接调用，
+不需要 `using`。
 
-真正需要留意的是**全局命名空间里的非宏符号**。库为了可用性把它们放在全局：
+内部实现（`include/logger/detail/` 与 `src/`）在 `namespace logger::detail` 下，
+**不承诺稳定**，也不建议使用。
 
-| 符号 | 为什么在全局 |
+| 项 | 说明 |
 |---|---|
-| `encode(...)` 重载集 | 自定义类型的扩展点，必须在全局才能被库内的调用找到（见下） |
-| `KV(...)` | 调用点天天要写，加命名空间太啰嗦 |
-| `filename_of` | `LOG_*` 宏展开时用 |
-| `install_crash_handler` / `uninstall_crash_handler` | 无前缀的顶层功能 |
-| `is_sensitive_key` / `default_sensitive_field_masker` | 自定义 masker 要复用关键词表 |
-| `append_field` / `dedup_fields` / `split_fields` | `KV` 的配套，模板里要用 |
+| 冲突时的处理 | 宏可以 `#undef`；不想 `using namespace logger;` 就写全限定名；或干脆只用 `Logger` 成员函数不用宏 |
+| 字节字面量 | `10_mb` 在 `logger::literals` 里，需要 `using namespace logger::literals;` 才生效 |
+| 为什么是现在 | v1.0.0 之前所有符号都在全局命名空间。收进命名空间发生在 v1.0.0 发布**之前** —— 一旦发布就是 MAJOR 破坏性变更 |
 
-冲突时的处理：宏可以 `#undef`；函数可以用 `::encode` 显式限定，或干脆只用 `Logger` 成员函数不用宏。
-字号量后缀（`10_mb`）在 `namespace logger::literals` 里，**需要 `using` 才生效**，不污染全局。
+### 自定义类型：重载 encode
 
-### 自定义类型的扩展点有个限制
-
-`encode` 是自定义类型的接入方式，但库内是**限定调用** `::encode(...)` —— 限定调用不触发 ADL，
-所以重载必须定义在**全局命名空间**：
+定义在**类型自己的命名空间**里即可 —— 库内是非限定调用，靠 ADL 找到：
 
 ```cpp
-// ✓ 可以：全局命名空间
-inline void encode(const Money& v, std::string& o, bool json) { ... }
+namespace my {
+struct Money {
+  long cents;
+};
+inline void encode(const Money& v, std::string& o, bool json) {
+  o += std::to_string(v.cents) + "c";   // 两种格式都由你决定，库不加引号也不转义
+}
+}  // namespace my
 
-// ✗ 不行：自己的命名空间（ADL 被 :: 关掉，找不到）
-namespace my { inline void encode(const Money&, std::string&, bool) { ... } }
+LOG_INFO("paid", KV("amount", my::Money{999}));   // → amount=999c
 ```
 
-绕不开时用第二条路：只提供 `operator<<`，库会退到 `ostringstream`（JSON 下当字符串处理）。
-这条限制登记在 [破坏性变更清单](breaking-changes.md) 的待改进项里。
+放在全局命名空间里也行。或者只提供 `operator<<`，库会退到 `ostringstream`
+（JSON 下当字符串处理）。
 
 ## 5. 配置兼容性
 

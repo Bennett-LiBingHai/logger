@@ -8,6 +8,7 @@
 
 #include "logger/detail/utils.h"
 
+namespace logger {
 FileSink::FileSink(const FileSinkConfig& config) : config_(config) {
   if (config_.dir.empty())
     return;  // 无效目录：保持不可用，写失败由 Logger 按策略兜底
@@ -60,7 +61,7 @@ void FileSink::rotate(bool change_date) noexcept {
     char buf[64];
     time_t t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
     std::tm tm{};
-    if (!localtime_safe(t, tm))
+    if (!detail::localtime_safe(t, tm))
       return;
     if (std::strftime(buf, sizeof(buf), "%Y_%m_%d_%H.log", &tm) == 0)
       return;
@@ -131,3 +132,5 @@ void FileSink::limit_log_files() noexcept {
     ec.clear();
   }
 }
+
+}  // namespace logger

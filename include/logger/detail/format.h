@@ -4,6 +4,7 @@
 
 #include "logger/field.h"
 
+namespace logger::detail {
 /// @file detail/format.h
 /// @brief `{}` 占位符的位置参数格式化。
 ///
@@ -64,3 +65,5 @@ std::string format(const std::string& fmt, const Args&... args) {
   }
   return result;
 }
+
+}  // namespace logger::detail

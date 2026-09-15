@@ -12,6 +12,26 @@
 
 ## M7（v1.0.0）
 
+### 所有符号收进 `logger::` 命名空间
+
+- **现象**：`Logger::get_instance()`、`KV(...)`、`LogConfig`、`Field`、`StackTrace`、
+  `encode(...)` 等不再直接可用，要写成 `logger::X`，或在文件顶部加 `using namespace logger;`。
+  宏 `LOG_*` **不受影响**，照常直接用
+- **原因**：v1.0.0 之前所有符号都摊在全局命名空间 —— 19 个类型 + 9 个函数。
+  `Logger`、`Field`、`encode` 这类名字与业务代码撞车的概率不低（`Logger` 尤其常见），
+  而命名空间是零成本的隔离。宏放不进命名空间，所以 `LOG_*` 仍是全局的（内部已用全限定名）
+- **迁移**：在用到库的 .cpp 顶部加 `using namespace logger;`（推荐），或写全限定名
+  `logger::Logger::get_instance()`。内部实现从全局移到了 `logger::detail`，
+  用到 `detail/` 头的代码本来就不受承诺保护
+
+### 自定义类型的 `encode` 可以定义在自己的命名空间里了
+
+- **现象**：以前 `encode(const Money&, std::string&, bool)` 必须定义在**全局命名空间**，
+  放进 `namespace my { }` 会找不到；现在两种位置都行
+- **原因**：库内原本是限定调用 `::encode(...)`，限定调用不触发 ADL。收进命名空间时改成了
+  非限定调用（配合 `using ::logger::encode;` 把库的重载带进作用域），ADL 就生效了
+- **迁移**：不需要。原来是全局的那份继续有效
+
 ### `with()` 得到的子 Logger 析构不再关闭日志器
 
 - **现象**：以前 `auto lg = Logger::get_instance().with(KV(...))` 的 `lg` 一离开作用域，
@@ -127,6 +147,5 @@
 | 项 | 说明 |
 |---|---|
 | 用户字段与 JSON 保留名重名不被拦截 | `KV("level", "boom")` 会产生重复键（`"level"` 出现两次），解析器行为不一致（Python 取最后一个，有的库直接报错）。保留名见[兼容性说明](compatibility.md#6-json-字段兼容性) |
-| `encode` 只能定义在全局命名空间 | 库内是限定调用 `::encode(...)`，不触发 ADL，放在自己的命名空间里找不到。改成非限定调用即可支持 ADL，且向后兼容 |
 | 消息正文不参与脱敏 | `LOG_INFO("password={}", pwd)` 不会被拦截 —— 正文没有 key 可判断。只能在文档里强调 |
 | `char buf[N]` 走字面量重载 | 现在长度取对了，但它仍是字面量重载（`N > 1` 的 `static_assert` 对运行期数组没意义）。彻底区分需要在接口上约束真字面量 |

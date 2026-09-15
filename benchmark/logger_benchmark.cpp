@@ -42,6 +42,8 @@
 #include "logger/logger.h"
 #include "logger/sink/file_sink.h"
 
+using namespace logger;  // 库的公共符号都在 logger:: 下
+
 namespace {
 
 using Clock = std::chrono::steady_clock;

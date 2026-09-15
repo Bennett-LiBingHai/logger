@@ -8,6 +8,9 @@
 
 #include "logger/field.h"
 
+using namespace logger;          // 库的公共符号
+using namespace logger::detail;  // 白盒用例要直接构造 Record / Formatter 等内部类型
+
 namespace {
 struct Streamable {
   int x;
@@ -69,6 +72,22 @@ TEST(EncodeTest, EncodesNanInf) {
   EXPECT_EQ(encode(nan, true), "null");
   EXPECT_EQ(encode(inf, true), "null");
   EXPECT_EQ(encode(-inf, false), "-inf");
+}
+
+namespace money_ns {
+struct Money {
+  long cents;
+};
+// 自定义类型的 encode 定义在**自己的命名空间**里 —— 库内是非限定调用，靠 ADL 找到
+inline void encode(const Money& v, std::string& o, bool) {
+  o += std::to_string(v.cents) + "c";
+}
+}  // namespace money_ns
+
+TEST(EncodeTest, FindsUserEncodeViaAdl) {
+  EXPECT_EQ(encode(money_ns::Money{42}, false), "42c");
+  // 两种格式都由用户自己的 encode 决定：库不会替它加引号或转义
+  EXPECT_EQ(encode(money_ns::Money{42}, true), "42c");
 }
 
 // 派生异常必须按引用编码：按值传会被切片，what() 退化成基类的 "std::exception"

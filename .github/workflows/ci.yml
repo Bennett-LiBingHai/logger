@@ -4,8 +4,17 @@ on: [push, pull_request]
 
 jobs:
   build-and-test:
-    name: Build & Test
+    name: Build & Test (${{ matrix.build_type }})
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # Release 必须一起跑：有一类问题只在优化打开时出现 ——
+        #   - fortify 的 -Wunused-result（Debug 下 _FORTIFY_SOURCE 不生效）
+        #   - -fdelete-null-pointer-checks 把「对已知空指针的写」当 UB 删掉
+        #   - -O3 内联掉函数，栈帧测试期望的帧名消失
+        # 只编 Debug 这三类都发现不了
+        build_type: [Debug, Release]
     steps:
       - uses: actions/checkout@v5
 
@@ -15,7 +24,7 @@ jobs:
           sudo apt-get install -y cmake g++ libgtest-dev
 
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
 
       - name: Build
         run: cmake --build build -j"$(nproc)"
@@ -58,6 +67,31 @@ jobs:
         run: |
           clang-tidy-18 -p build --quiet -warnings-as-errors='*' \
             src/*.cpp src/detail/*.cpp src/detail/formatter/*.cpp src/sink/*.cpp
+
+  consumer:
+    name: Consumer (find_package)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++
+
+      # 安装到 _prefix，再用 test/consumer 那个独立工程验证
+      # find_package(logger) + logger::logger 这一整条路能走通
+      - name: Install the library
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF
+          cmake --build build -j"$(nproc)"
+          cmake --install build --prefix "$PWD/_prefix"
+
+      - name: Build and run a consumer
+        run: |
+          cmake -S test/consumer -B consumer-build -DCMAKE_PREFIX_PATH="$PWD/_prefix"
+          cmake --build consumer-build
+          ./consumer-build/consumer_app
 
   sanitizers:
     name: Sanitizers (ASan + UBSan)
@@ -108,14 +142,20 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install doxygen
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y doxygen
+          sudo apt-get install -y cmake doxygen
 
+      # 走 CMake 的 docs 目标（README 里给用户的也是这条）。
+      # 直接 `doxygen Doxyfile` 在干净检出上会失败：Doxyfile 的输出目录是 build/docs，
+      # 而 Doxygen 只创建最后一级目录，缺 build/ 时报
+      # "Output directory 'build/docs' does not exist and cannot be created"。
+      # Doxyfile 里 WARN_AS_ERROR=YES，所以文档告警会直接让 doxygen 非零退出。
       - name: Generate API docs
-        run: doxygen Doxyfile
+        run: |
+          cmake -S . -B build -DBUILD_DOCS=ON -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=OFF
+          cmake --build build --target docs
 
-      # 生成成功即通过；WARN_AS_ERROR=NO，文档警告不阻塞构建
       - name: Check output
         run: test -f build/docs/html/index.html

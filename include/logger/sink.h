@@ -4,6 +4,7 @@
 
 #include "logger/level.h"
 
+namespace logger {
 /// @file sink.h
 /// @brief 输出槽抽象与交给输出槽的成品。
 
@@ -50,3 +51,5 @@ class LogSink {
 
   virtual ~LogSink() = default;
 };
+
+}  // namespace logger

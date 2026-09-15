@@ -1,5 +1,6 @@
 #include "logger/logger.h"
 
+namespace logger {
 // Logger 非模板部分的实现：生命周期、配置、后台线程、写出与各处理阶段。
 
 // 获取全局单例。首次调用时构造，进程退出时析构（析构会 flush 并停止后台线程）
@@ -12,8 +13,8 @@
 // less=true 表示结构化入口，不输出文件/行号/函数
 SinkInput Logger::format_record(const Record& msg, const LogConfig& config, bool less) {
   if (config.format == LogFormat::JSON)
-    return JsonFormatter::format(msg, config, less);
-  return TextFormatter::format(msg, config, less);
+    return detail::JsonFormatter::format(msg, config, less);
+  return detail::TextFormatter::format(msg, config, less);
 }
 
 // 一次向全部 Sink 写出后的结果汇总
@@ -276,7 +277,7 @@ SinkInput Logger::format_record_budgeted(const Record& msg, const LogConfig& con
     if (keep < 3)
       trimmed.content = "...";  // 消息被削到无内容，留省略标记
     else
-      truncate_utf8(trimmed.content, keep);
+      detail::truncate_utf8(trimmed.content, keep);
     result = format_record(trimmed, config, less);
   }
 
@@ -297,7 +298,7 @@ void Logger::limit_field_lengths(std::vector<Field>& fields, const LogConfig& co
     std::string value;
     f.value.encode(value, json);
     if (value.size() > config.max_field_length) {
-      truncate_utf8(value, config.max_field_length);
+      detail::truncate_utf8(value, config.max_field_length);
       f.value = FieldValue::from(std::move(value));
     }
   }
@@ -333,7 +334,7 @@ void Logger::emit_dedup_summary(std::uint64_t count, const LogConfig& config, bo
 // 其它线程的槽无法触及（thread_local），由它们各自的下一条不同日志收尾。
 // 本路径不经过 log_impl 的兜底，自己接住异常：刷盘是尽力而为
 void Logger::flush_dedup() noexcept {
-  const std::uint64_t count = dedup_filter().take_prev_count();
+  const std::uint64_t count = detail::dedup_filter().take_prev_count();
   if (count <= 1)
     return;
 
@@ -392,3 +393,5 @@ void Logger::log_impl_sync(const Record& msg, const LogConfig& config,
     c.by_level[static_cast<std::size_t>(msg.log_level)].fetch_add(1, std::memory_order_relaxed);
   }
 }
+
+}  // namespace logger

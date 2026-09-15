@@ -22,6 +22,17 @@ M7：测试、文档与正式发布。API 稳定，自本版本起按语义化�
 - Doxygen API 文档（`BUILD_DOCS=ON` + `docs` 目标），`WARN_AS_ERROR=YES` 零警告
 - `LogStats::queue_peak`、`LogStats::max_write_latency_us`
 - [性能报告](docs/performance.md)：16 个场景的实测吞吐与 P50/P95/P99，含 M5 / M6 新增能力的开销
+- **支持 `find_package`**：补上安装与导出规则（`install(TARGETS)` / `install(EXPORT)` +
+  `cmake/loggerConfig.cmake.in`），外部项目现在可以
+  `find_package(logger 1.0 REQUIRED)` + `target_link_libraries(app PRIVATE logger::logger)`。
+  同时给库加了 `logger::logger` **别名目标**（供 `add_subdirectory` 的消费者使用，避免
+  与别的项目的 `logger` 目标撞名）。`test/consumer/` 是跑通的消费者示例，CI 有对应 job
+- **API 文档发布到 GitHub Pages**（[.github/workflows/docs.yml](.github/workflows/docs.yml)）：
+  推 main 自动更新 https://bennett-libinghai.github.io/logger/ 。首页内容放在
+  [docs/mainpage.md](docs/mainpage.md)（之前生成的 index.html 是空的）
+- **`logger.h` 成为统一入口**（umbrella header）：只需 `#include <logger/logger.h>`，
+  它带进全部公共能力（原先还要单独包含 console_sink / file_sink / crash_handler /
+  version / literals）。**不再推荐**单独包含其它公共头
 - **版本宏** [version.h](include/logger/version.h)：`LOG_VERSION` / `LOG_VERSION_MAJOR` /
   `LOG_VERSION_MINOR` / `LOG_VERSION_PATCH` / `LOG_VERSION_CODE`。配套的 `test_version`
   会比对 `CMakeLists.txt` 的 `project(VERSION)`，两处版本号漂移会直接测失败
@@ -30,6 +41,10 @@ M7：测试、文档与正式发布。API 稳定，自本版本起按语义化�
 
 ### Changed
 
+- **公共符号收进 `logger::` 命名空间**（破坏性，迁移见下）：19 个类型 + 9 个函数从全局移入
+  `logger::`，内部实现移入 `logger::detail`；宏 `LOG_*` 不受影响（宏没有命名空间，
+  内部已改用全限定名）。顺带解决了一个老问题：自定义类型的 `encode` 现在可以定义在
+  **类型自己的命名空间**里（靠 ADL 找到），以前只能定义在全局
 - **性能基准改用 Google Benchmark**（可选依赖，`apt install libbenchmark-dev`；未安装则跳过基准目标），
   场景从 7 个扩到 16 个：补上上下文、脱敏、去重、长度预算、转义、异常、堆栈采集/符号化、
   队列满丢弃等此前从未测过的路径。相比自研 harness 补上了自适应迭代、多轮重复与变异系数、
@@ -40,9 +55,23 @@ M7：测试、文档与正式发布。API 稳定，自本版本起按语义化�
 - `include/logger/utiils.h` → `include/logger/detail/utils.h`；`src/` 目录结构与 `include/` 对齐
 - `Logger` 的构造函数全部私有，拷贝赋值与移动赋值禁用；只能由 `get_instance()` 或 `with()` 得到实例
 - `KV` 的 key 长度改按 `strlen` 取（原来按数组长度取，非常量数组会产生带 NUL 的字段名）
+- **CI 的 build-and-test 改成 Debug + Release 矩阵**：上一版只编 Debug，把所有
+  「只在开优化时出现」的问题都放过去了（fortify 的 `-Wunused-result`、
+  `-fdelete-null-pointer-checks` 删代码、`-O3` 内联）
+- `docs` 目标先清空输出目录：Doxygen 不清理自己上次生成的页面，改名符号后会新旧混在一起
+- 补齐 `context.h` / `stacktrace.h` / `sink/{console,file}_sink.h` 缺失的 `@file` 说明
 
 ### Fixed
 
+- **`crash_handler.cpp` 在 Release 下的 `-Wunused-result`**：glibc 只在 fortify
+  （`_FORTIFY_SOURCE`，随 `-O` 生效）下给 `write` 挂 `warn_unused_result`，Debug 编不出来。
+  接住返回值再显式忽略（GCC 下 `(void)::write(...)` 不算"使用了返回值"）
+- **两个测试在 Release（-O3）下失效**（库本身没问题，是用例写得依赖了优化等级）：
+  - `test_console` 的崩溃用例：`*nullptr = 42` 是 UB，`-O2` 以上默认开
+    `-fdelete-null-pointer-checks`，**整段被删掉，崩溃压根不发生** —— 那两个用例其实在测空气。
+    改走 `volatile` 全局取地址，值只在运行期可见
+  - `test_stacktrace` 的符号化用例：`-O3` 把被测函数内联进调用者，栈上没有它的帧。
+    给它加 `__attribute__((noinline))`（"内联掉的帧解不出名字"是库的既定行为，不是缺陷）
 - **`with()` 得到的子 Logger 析构会关闭整个日志器**：它的析构等价于 `close()`，
   而它与单例共享状态。异步模式下后果是后台线程被 join、后续日志入队后无人消费 ——
   `flush_all()` 永久挂起，记录静默丢失（`dropped` 还是 0）。

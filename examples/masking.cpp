@@ -3,6 +3,8 @@
 #include <memory>
 #include <string>
 
+using namespace logger;  // 库的公共符号都在 logger:: 下
+
 // 敏感字段脱敏：默认按关键词整体隐藏，也可自定义规则（如卡号保留前后几位）
 int main() {
   Logger::get_instance().add_sink(std::make_shared<ConsoleSink>());

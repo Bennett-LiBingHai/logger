@@ -3,6 +3,7 @@
 #include <string>
 #include <string_view>
 
+namespace logger {
 /// @file level.h
 /// @brief 日志级别枚举及其文本转换。
 
@@ -67,3 +68,5 @@ enum class LogLevel : std::uint8_t {
     return "unknown";
   }
 }
+
+}  // namespace logger

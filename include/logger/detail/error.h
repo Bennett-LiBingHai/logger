@@ -8,6 +8,8 @@
 
 #if defined(__GNUG__)
 #include <cxxabi.h>
+
+namespace logger::detail {
 #endif
 
 /// @file detail/error.h
@@ -136,3 +138,5 @@ inline ExceptionInfo extract_exception(const std::exception_ptr& ep) {
     return ExceptionInfo{"<unknown>", "<unknown>", "<unknown>", false};
   }
 }
+
+}  // namespace logger::detail

@@ -5,6 +5,8 @@
 #include <thread>
 #include <vector>
 
+using namespace logger;  // 库的公共符号都在 logger:: 下
+
 // 异步写入：业务线程只入队，后台线程负责格式化与落盘
 int main() {
   LogConfig cfg;

@@ -6,6 +6,10 @@
 
 #include "logger/sink.h"
 
+namespace logger {
+/// @file sink/file_sink.h
+/// @brief 文件输出槽及其轮转与保留配置。
+
 /// @brief 文件输出槽的配置。
 ///
 /// 轮转按「日期」与「大小」两条轴各自独立触发，可只开一条：
@@ -64,3 +68,5 @@ class FileSink : public LogSink {
   unsigned long long written_ = 0;                  ///< 当前文件已写字节数
   std::chrono::system_clock::time_point pre_time_;  ///< 上次创建文件的时间
 };
+
+}  // namespace logger

@@ -3,6 +3,8 @@
 #include <logger/trace.h>
 #include <memory>
 
+using namespace logger;  // 库的公共符号都在 logger:: 下
+
 // Trace 集成：从上游 traceparent 接续链路，作用域内日志自动带 trace_id / span_id
 int main() {
   Logger::get_instance().add_sink(std::make_shared<ConsoleSink>());

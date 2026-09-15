@@ -8,6 +8,9 @@
 
 #include "test_helpers.h"
 
+using namespace logger;          // 库的公共符号
+using namespace logger::detail;  // 白盒用例要直接构造 Record / Formatter 等内部类型
+
 // M6：日志自身指标 —— 写入/失败/丢弃/按级别/编码失败/脱敏/聚合去重
 //
 // 单例计数跨用例累积，故断言一律取基线差值。

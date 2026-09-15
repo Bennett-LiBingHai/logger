@@ -5,6 +5,9 @@
 
 #include "test_helpers.h"
 
+using namespace logger;          // 库的公共符号
+using namespace logger::detail;  // 白盒用例要直接构造 Record / Formatter 等内部类型
+
 // M1：Logger 核心 API —— 单例、级别过滤、多 Sink、刷新、截断
 class LoggerTest : public ::testing::Test {
  protected:

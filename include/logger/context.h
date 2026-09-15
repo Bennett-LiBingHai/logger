@@ -1,6 +1,10 @@
 #pragma once
 #include "logger/field.h"
 
+namespace logger {
+/// @file context.h
+/// @brief 作用域上下文（ContextScope）及其 thread_local 栈。
+
 /// @brief 作用域上下文：进入作用域后，本线程打出的日志自动附加这些字段。
 ///
 /// 基于 thread_local 栈 + RAII：构造入栈、析构出栈，天然支持嵌套（内层覆盖外层同名
@@ -59,3 +63,5 @@ class ContextScope {
 
   std::vector<Field> data_;  ///< 本作用域的字段
 };
+
+}  // namespace logger

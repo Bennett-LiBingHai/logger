@@ -2,6 +2,8 @@
 #include <logger/sink/console_sink.h>
 #include <memory>
 
+using namespace logger;  // 库的公共符号都在 logger:: 下
+
 // 运行期调整级别：接到 HTTP / SIGHUP / 配置中心里，就是一行 set_level()
 int main() {
   Logger::get_instance().add_sink(std::make_shared<ConsoleSink>());

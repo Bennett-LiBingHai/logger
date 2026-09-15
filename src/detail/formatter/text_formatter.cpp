@@ -4,6 +4,7 @@
 
 #include "logger/detail/utils.h"
 
+namespace logger::detail {
 // 预留长度的经验值：头部（时间戳 + 级别 + 线程 + 文件行 + 函数）约 96 字节，
 // 每个字段（key + 编码后的值）按 48 字节估。估小了只是多一次扩容，估大了浪费内存，
 // 数量级对就行 —— 目的是避免一条百来字节的记录在拼接过程中反复扩容 + 拷贝。
@@ -55,3 +56,5 @@ constexpr std::size_t kPerFieldReserve = 48;
 
   return SinkInput{std::move(line), msg.log_level};
 }
+
+}  // namespace logger::detail

@@ -17,18 +17,34 @@
 
 #include "logger/config.h"
 #include "logger/context.h"
+#include "logger/crash_handler.h"
 #include "logger/detail/dedup.h"
 #include "logger/detail/error.h"
 #include "logger/detail/format.h"
 #include "logger/detail/formatter/json_formatter.h"
 #include "logger/detail/formatter/text_formatter.h"
 #include "logger/detail/record.h"
+#include "logger/literals.h"
 #include "logger/sink.h"
+#include "logger/sink/console_sink.h"
+#include "logger/sink/file_sink.h"
 #include "logger/stacktrace.h"
 #include "logger/trace.h"
+#include "logger/version.h"
+
+namespace logger {
+// 内部类型在本头文件内的短别名：它们定义在 detail/ 下，不随本库的兼容性承诺走
+using detail::dedup_filter;
+using detail::DedupFilter;
+using detail::extract_exception;
+using detail::Record;
+using detail::truncate_utf8;
 
 /// @file logger.h
-/// @brief 日志器单例、LOG_* 宏入口与运行期配置接口。
+/// @brief 库的统一入口：日志器单例、`LOG_*` 宏、运行期配置，以及全部公共接口。
+///
+/// **包含这一个头即可** —— 它是库的统一入口，其余公共头（级别、配置、字段、上下文、
+/// 堆栈、Trace、崩溃处理器、Sink、版本号、字节字面量）都由它带进来。
 
 /// @brief 日志器（进程内单例）。
 ///
@@ -57,7 +73,7 @@ class Logger {
 
   /// @brief 打印一条日志（宏入口，自动携带文件 / 行号 / 函数名）。
   /// @param logLevel 日志级别；低于当前配置级别的会被静默丢弃。
-  /// @param file 源文件名，由 LOG_* 宏传入 filename_of(__FILE__)。
+  /// @param file 源文件名，由 LOG_* 宏传入 ::logger::filename_of(__FILE__)。
   /// @param line 源文件行号。
   /// @param func 所在函数名。
   /// @param fmt 格式串，用 {} 作占位符；参数不足时占位符原样保留。
@@ -369,7 +385,8 @@ class Logger {
   /// @param args 额外 KV(...) 字段。
   template <typename... Args>
   void log_exception_impl(LogLevel level, const char* file, int line, const char* func,
-                          const char* msg, const ExceptionInfo& info, Args&&... args) noexcept;
+                          const char* msg, const detail::ExceptionInfo& info,
+                          Args&&... args) noexcept;
 
   /// @brief 按配置的格式选择对应 Formatter 并格式化。
   /// @param msg 记录。
@@ -469,52 +486,53 @@ constexpr const char* filename_of(const char* path) {
 /// @brief 打印 TRACE 级日志。
 /// @param fmt 格式串，用 {} 作占位符。
 /// @param ... 位置参数与 KV(...) 字段。
-#define LOG_TRACE(fmt, ...)                                                                   \
-  Logger::get_instance().log(LogLevel::TRACE, filename_of(__FILE__), __LINE__, __func__, fmt, \
-                             ##__VA_ARGS__)
+#define LOG_TRACE(fmt, ...)                                                                        \
+  ::logger::Logger::get_instance().log(::logger::LogLevel::TRACE, ::logger::filename_of(__FILE__), \
+                                       __LINE__, __func__, fmt, ##__VA_ARGS__)
 
 /// @brief 打印 DEBUG 级日志。
 /// @param fmt 格式串，用 {} 作占位符。
 /// @param ... 位置参数与 KV(...) 字段。
-#define LOG_DEBUG(fmt, ...)                                                                   \
-  Logger::get_instance().log(LogLevel::DEBUG, filename_of(__FILE__), __LINE__, __func__, fmt, \
-                             ##__VA_ARGS__)
+#define LOG_DEBUG(fmt, ...)                                                                        \
+  ::logger::Logger::get_instance().log(::logger::LogLevel::DEBUG, ::logger::filename_of(__FILE__), \
+                                       __LINE__, __func__, fmt, ##__VA_ARGS__)
 
 /// @brief 打印 INFO 级日志。
 /// @param fmt 格式串，用 {} 作占位符。
 /// @param ... 位置参数与 KV(...) 字段。
-#define LOG_INFO(fmt, ...)                                                                   \
-  Logger::get_instance().log(LogLevel::INFO, filename_of(__FILE__), __LINE__, __func__, fmt, \
-                             ##__VA_ARGS__)
+#define LOG_INFO(fmt, ...)                                                                        \
+  ::logger::Logger::get_instance().log(::logger::LogLevel::INFO, ::logger::filename_of(__FILE__), \
+                                       __LINE__, __func__, fmt, ##__VA_ARGS__)
 
 /// @brief 打印 WARN 级日志。
 /// @param fmt 格式串，用 {} 作占位符。
 /// @param ... 位置参数与 KV(...) 字段。
-#define LOG_WARN(fmt, ...)                                                                   \
-  Logger::get_instance().log(LogLevel::WARN, filename_of(__FILE__), __LINE__, __func__, fmt, \
-                             ##__VA_ARGS__)
+#define LOG_WARN(fmt, ...)                                                                        \
+  ::logger::Logger::get_instance().log(::logger::LogLevel::WARN, ::logger::filename_of(__FILE__), \
+                                       __LINE__, __func__, fmt, ##__VA_ARGS__)
 
 /// @brief 打印 ERROR 级日志。
 /// @param fmt 格式串，用 {} 作占位符。
 /// @param ... 位置参数与 KV(...) 字段。
-#define LOG_ERROR(fmt, ...)                                                                   \
-  Logger::get_instance().log(LogLevel::ERROR, filename_of(__FILE__), __LINE__, __func__, fmt, \
-                             ##__VA_ARGS__)
+#define LOG_ERROR(fmt, ...)                                                                        \
+  ::logger::Logger::get_instance().log(::logger::LogLevel::ERROR, ::logger::filename_of(__FILE__), \
+                                       __LINE__, __func__, fmt, ##__VA_ARGS__)
 
 /// @brief 打印 FATAL 级日志；按 StackTraceMode 默认会自动附上调用栈。
 /// @param fmt 格式串，用 {} 作占位符。
 /// @param ... 位置参数与 KV(...) 字段。
-#define LOG_FATAL(fmt, ...)                                                                   \
-  Logger::get_instance().log(LogLevel::FATAL, filename_of(__FILE__), __LINE__, __func__, fmt, \
-                             ##__VA_ARGS__)
+#define LOG_FATAL(fmt, ...)                                                                        \
+  ::logger::Logger::get_instance().log(::logger::LogLevel::FATAL, ::logger::filename_of(__FILE__), \
+                                       __LINE__, __func__, fmt, ##__VA_ARGS__)
 
 /// @brief 记录异常并自动展开字段（error / error_type / error_chain），级别为 ERROR。
 /// @param msg 说明文字。
 /// @param exc 异常对象或 std::exception_ptr。
 /// @param ... 额外 KV(...) 字段。
-#define LOG_EXCEPTION(msg, exc, ...)                                                               \
-  Logger::get_instance().log_exception(LogLevel::ERROR, filename_of(__FILE__), __LINE__, __func__, \
-                                       (msg), (exc), ##__VA_ARGS__)
+#define LOG_EXCEPTION(msg, exc, ...)                                                        \
+  ::logger::Logger::get_instance().log_exception(::logger::LogLevel::ERROR,                 \
+                                                 ::logger::filename_of(__FILE__), __LINE__, \
+                                                 __func__, (msg), (exc), ##__VA_ARGS__)
 /// @}
 
 template <typename... Args>
@@ -634,7 +652,8 @@ void Logger::log_impl_inner(LogLevel logLevel, const char* file, int line, const
   // 脱敏必须早于构造 Record：异步模式下队列里不该存明文
   mask_sensitive_fields(fields, config);
   // 位置参数经用户 operator<< 编码，可能抛；统一由 log_impl 兜底
-  std::string content = std::apply([&](auto&&... pa) { return format(fmt, pa...); }, positional);
+  std::string content =
+      std::apply([&](auto&&... pa) { return detail::format(fmt, pa...); }, positional);
 
   // 部件上限：先限制各部件，整条预算由 format_record_budgeted 兜底
   limit_field_lengths(fields, config);
@@ -721,7 +740,7 @@ inline void Logger::route_record(Record&& msg, const LogConfig& config, bool is_
 
 template <typename... Args>
 void Logger::log_exception_impl(LogLevel level, const char* file, int line, const char* func,
-                                const char* msg, const ExceptionInfo& info,
+                                const char* msg, const detail::ExceptionInfo& info,
                                 Args&&... args) noexcept {
   // error_chain 只在有嵌套时产生；无嵌套用空 key 占位，append_field 会跳过它
   Field chain;
@@ -745,3 +764,5 @@ void Logger::log_exception(LogLevel level, const char* file, int line, const cha
   log_exception_impl(level, file, line, func, msg, extract_exception(e),
                      std::forward<Args>(args)...);
 }
+
+}  // namespace logger

@@ -9,6 +9,8 @@
 #include "logger/sink.h"
 #include "logger/sink/file_sink.h"
 
+using namespace logger;  // 库的公共符号
+
 namespace fs = std::filesystem;
 
 namespace {

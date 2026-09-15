@@ -8,6 +8,9 @@
 #include "logger/detail/record.h"
 #include "logger/field.h"
 
+using namespace logger;          // 库的公共符号
+using namespace logger::detail;  // 白盒用例要直接构造 Record / Formatter 等内部类型
+
 namespace {
 Record make_record(const std::string& content, std::vector<Field> fields) {
   Record r;

@@ -36,9 +36,17 @@ set(SRC_FILES
 
 add_library(logger STATIC ${SRC_FILES})
 
+# 带命名空间的别名：供 add_subdirectory / FetchContent 的消费者使用，避免与别的项目的
+# `logger` 目标撞名。注意 ALIAS 不能被 install/export —— 对 find_package 的消费者，
+# 命名空间由下面的 install(EXPORT ... NAMESPACE logger::) 提供
+add_library(logger::logger ALIAS logger)
+
 target_compile_features(logger PUBLIC cxx_std_17)
 
-target_include_directories(logger PUBLIC ${CMAKE_SOURCE_DIR}/include)
+# BUILD_INTERFACE / INSTALL_INTERFACE：源码树里指向 include/，安装后指向 <前缀>/include
+target_include_directories(
+    logger PUBLIC $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+                  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 
 find_package(Threads REQUIRED)
 # dladdr 需要 libdl（glibc ≥ 2.34 已并入 libc，CMAKE_DL_LIBS 会自动处理为空）
@@ -49,14 +57,45 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_link_options(logger INTERFACE -rdynamic)
 endif()
 
+# —— 安装与导出 ——
+# 装完之后外部项目可以：
+#   find_package(logger 1.0 REQUIRED)
+#   target_link_libraries(app PRIVATE logger::logger)
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
+install(TARGETS logger EXPORT loggerTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+set(LOGGER_CMAKE_DIR ${CMAKE_INSTALL_LIBDIR}/cmake/logger)
+install(EXPORT loggerTargets
+        NAMESPACE logger::
+        FILE loggerTargets.cmake
+        DESTINATION ${LOGGER_CMAKE_DIR})
+
+configure_package_config_file(
+    ${CMAKE_SOURCE_DIR}/cmake/loggerConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/loggerConfig.cmake
+    INSTALL_DESTINATION ${LOGGER_CMAKE_DIR})
+# find_package时可以指定版本号,需要版本号与VERSION兼容,SameMajorVersion表示大版本相同时兼容
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/loggerConfigVersion.cmake
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion)
+install(FILES
+        ${CMAKE_CURRENT_BINARY_DIR}/loggerConfig.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/loggerConfigVersion.cmake
+        DESTINATION ${LOGGER_CMAKE_DIR})
+
+# ——————————————————————————————————————————————————————————————————————
 # 可运行示例
 add_executable(logger_example ${CMAKE_SOURCE_DIR}/examples/basic_usage.cpp)
-target_link_libraries(logger_example PRIVATE logger)
+target_link_libraries(logger_example PRIVATE logger::logger)
 target_compile_features(logger_example PRIVATE cxx_std_17)
 
 foreach(example file_logging async_logging trace_logging masking dynamic_level)
     add_executable(example_${example} ${CMAKE_SOURCE_DIR}/examples/${example}.cpp)
-    target_link_libraries(example_${example} PRIVATE logger)
+    target_link_libraries(example_${example} PRIVATE logger::logger)
     target_compile_features(example_${example} PRIVATE cxx_std_17)
 endforeach()
 
@@ -89,7 +128,7 @@ if(BUILD_TESTS)
     )
 
     add_executable(test_logger ${TEST_SOURCES})
-    target_link_libraries(test_logger PRIVATE logger GTest::gtest GTest::gtest_main)
+    target_link_libraries(test_logger PRIVATE logger::logger GTest::gtest GTest::gtest_main)
     target_compile_features(test_logger PRIVATE cxx_std_17)
     target_include_directories(test_logger PRIVATE ${CMAKE_SOURCE_DIR}/test)
     # 把 project(VERSION) 透传进去，让 test_version 校验 version.h 与它不漂移
@@ -98,42 +137,42 @@ if(BUILD_TESTS)
 
     # 手动观察 ConsoleSink 按级别路由（Error+ → stderr，其余 → stdout），独立二进制避免污染单例
     add_executable(test_console ${CMAKE_SOURCE_DIR}/test/integration/test_console_output.cpp)
-    target_link_libraries(test_console PRIVATE logger GTest::gtest GTest::gtest_main)
+    target_link_libraries(test_console PRIVATE logger::logger GTest::gtest GTest::gtest_main)
     target_compile_features(test_console PRIVATE cxx_std_17)
     target_include_directories(test_console PRIVATE ${CMAKE_SOURCE_DIR}/test)
     add_test(NAME test_console COMMAND test_console)
 
     # 异步日志，独立二进制避免污染单例的同步/异步状态
     add_executable(test_async ${CMAKE_SOURCE_DIR}/test/integration/test_async.cpp)
-    target_link_libraries(test_async PRIVATE logger GTest::gtest GTest::gtest_main)
+    target_link_libraries(test_async PRIVATE logger::logger GTest::gtest GTest::gtest_main)
     target_compile_features(test_async PRIVATE cxx_std_17)
     target_include_directories(test_async PRIVATE ${CMAKE_SOURCE_DIR}/test)
     add_test(NAME test_async COMMAND test_async)
 
     # 异步优雅关闭，独立二进制（close() 会停止异步线程，单例不可复用）
     add_executable(test_async_close ${CMAKE_SOURCE_DIR}/test/integration/test_async_close.cpp)
-    target_link_libraries(test_async_close PRIVATE logger GTest::gtest GTest::gtest_main)
+    target_link_libraries(test_async_close PRIVATE logger::logger GTest::gtest GTest::gtest_main)
     target_compile_features(test_async_close PRIVATE cxx_std_17)
     target_include_directories(test_async_close PRIVATE ${CMAKE_SOURCE_DIR}/test)
     add_test(NAME test_async_close COMMAND test_async_close)
 
     # 文件系统异常：权限、目录消失、写失败降级、fd 泄漏
     add_executable(test_io_failure ${CMAKE_SOURCE_DIR}/test/integration/test_io_failure.cpp)
-    target_link_libraries(test_io_failure PRIVATE logger GTest::gtest GTest::gtest_main)
+    target_link_libraries(test_io_failure PRIVATE logger::logger GTest::gtest GTest::gtest_main)
     target_compile_features(test_io_failure PRIVATE cxx_std_17)
     target_include_directories(test_io_failure PRIVATE ${CMAKE_SOURCE_DIR}/test)
     add_test(NAME test_io_failure COMMAND test_io_failure)
 
     # 生命周期：并发 close、重复 close、线程回收（独立二进制，close 是终态）
     add_executable(test_lifecycle ${CMAKE_SOURCE_DIR}/test/integration/test_lifecycle.cpp)
-    target_link_libraries(test_lifecycle PRIVATE logger GTest::gtest GTest::gtest_main)
+    target_link_libraries(test_lifecycle PRIVATE logger::logger GTest::gtest GTest::gtest_main)
     target_compile_features(test_lifecycle PRIVATE cxx_std_17)
     target_include_directories(test_lifecycle PRIVATE ${CMAKE_SOURCE_DIR}/test)
     add_test(NAME test_lifecycle COMMAND test_lifecycle)
 
     # 持续高并发（固定时长，默认 2 秒；LOGGER_SOAK_SECONDS 可调大）
     add_executable(test_soak ${CMAKE_SOURCE_DIR}/test/integration/test_soak.cpp)
-    target_link_libraries(test_soak PRIVATE logger GTest::gtest GTest::gtest_main)
+    target_link_libraries(test_soak PRIVATE logger::logger GTest::gtest GTest::gtest_main)
     target_compile_features(test_soak PRIVATE cxx_std_17)
     target_include_directories(test_soak PRIVATE ${CMAKE_SOURCE_DIR}/test)
     add_test(NAME test_soak COMMAND test_soak)
@@ -144,8 +183,11 @@ endif()
 option(BUILD_DOCS "Build API docs (requires doxygen)" OFF)
 if(BUILD_DOCS)
     find_package(Doxygen REQUIRED)
+    # Doxygen 不清理输出目录：重命名符号后旧页面会留在那里，和新页面混在一起，
+    # 所以先删掉整个输出目录（路径跟 Doxyfile 的 OUTPUT_DIRECTORY 保持一致）
     add_custom_target(
         docs
+        COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_SOURCE_DIR}/build/docs
         COMMAND ${DOXYGEN_EXECUTABLE} ${CMAKE_SOURCE_DIR}/Doxyfile
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
         COMMENT "生成 API 文档 → build/docs/html/index.html"
@@ -160,7 +202,7 @@ if(BUILD_BENCHMARKS)
     find_package(benchmark QUIET)
     if(benchmark_FOUND)
         add_executable(logger_benchmark ${CMAKE_SOURCE_DIR}/benchmark/logger_benchmark.cpp)
-        target_link_libraries(logger_benchmark PRIVATE logger benchmark::benchmark
+        target_link_libraries(logger_benchmark PRIVATE logger::logger benchmark::benchmark
                                                        benchmark::benchmark_main)
         target_compile_features(logger_benchmark PRIVATE cxx_std_17)
     else()

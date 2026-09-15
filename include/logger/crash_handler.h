@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 
+namespace logger {
 /// @file crash_handler.h
 /// @brief 崩溃信号处理：进程崩溃时写下精确现场，随后保留 core dump 语义退出。
 
@@ -41,3 +42,5 @@ bool install_crash_handler(const std::string& path = std::string());
 /// @brief 卸载崩溃处理器：把接管过的信号恢复成接管前的处理，并关闭输出文件。
 /// @note 只还原真正接管过的信号，不会动其它库安装的 handler。
 void uninstall_crash_handler();
+
+}  // namespace logger

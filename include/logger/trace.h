@@ -2,6 +2,7 @@
 #include <string>
 #include <string_view>
 
+namespace logger {
 /// @file trace.h
 /// @brief W3C traceparent 编解码与链路字段约定。
 ///
@@ -49,3 +50,5 @@ bool parse_traceparent(std::string_view header, TraceContext& out);
 /// @return 头部字符串。四个字段任一非法（长度 / 字符 / 全 0）即返回空串——
 ///         不做任何默认值替换，避免发出「看似合法但语义被改过」的头。
 [[nodiscard]] std::string make_traceparent(const TraceContext& ctx);
+
+}  // namespace logger

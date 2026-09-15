@@ -14,6 +14,8 @@
 #include <link.h>  // dl_iterate_phdr：取主程序 load bias
 #include <sys/syscall.h>
 #include <sys/ucontext.h>
+
+namespace logger {
 #define LOGGER_HAS_CRASH_SUPPORT 1
 #endif
 
@@ -400,3 +402,5 @@ void uninstall_crash_handler() {
   g_in_handler = 0;
 #endif
 }
+
+}  // namespace logger
